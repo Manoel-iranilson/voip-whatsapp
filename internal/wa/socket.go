@@ -37,6 +37,9 @@ func (s *Socket) SendNode(ctx context.Context, node waBinary.Node) error {
 	return s.di().SendNode(ctx, node)
 }
 
+// queryTimeout bounds how long we wait for WhatsApp to acknowledge a stanza.
+const queryTimeout = 15 * time.Second
+
 func (s *Socket) Query(ctx context.Context, node waBinary.Node) (*waBinary.Node, error) {
 	id, _ := node.Attrs["id"].(string)
 	if id == "" {
@@ -48,12 +51,14 @@ func (s *Socket) Query(ctx context.Context, node waBinary.Node) (*waBinary.Node,
 		di.CancelResponse(id, ch)
 		return nil, err
 	}
+	timer := time.NewTimer(queryTimeout)
+	defer timer.Stop()
 	select {
 	case resp := <-ch:
 		return resp, nil
-	case <-time.After(15 * time.Second):
+	case <-timer.C:
 		di.CancelResponse(id, ch)
-		return nil, nil
+		return nil, core.ErrQueryTimeout
 	case <-ctx.Done():
 		di.CancelResponse(id, ch)
 		return nil, ctx.Err()
@@ -64,6 +69,11 @@ func (s *Socket) GetUSyncDevices(ctx context.Context, jids []types.JID) ([]types
 	return s.cli.GetUserDevices(ctx, jids)
 }
 
+// AssertSessions is intentionally a no-op. Call-key encryption goes through
+// EncryptMessageForDevices (see CreateParticipantNodes), which establishes a
+// Signal session from the device's prekey bundle on demand, so there is nothing
+// to pre-assert here. The method stays on the interface because the VoipSocket
+// contract mirrors whatsmeow's, and a future transport may need it.
 func (s *Socket) AssertSessions(ctx context.Context, jids []types.JID, force bool) error {
 	return nil
 }

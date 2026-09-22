@@ -2,6 +2,7 @@ package main
 
 import (
 	"sync"
+	"time"
 
 	"wacalls/internal/voip/call"
 )
@@ -9,6 +10,12 @@ import (
 type activeCall struct {
 	cm     *call.CallManager
 	bridge *Bridge
+	// rec is nil when this call is not being recorded; every callRecorder method
+	// tolerates that, so the audio paths call it without checking.
+	rec *callRecorder
+	// cap ends the call when duration_ms was given. It has to be stopped when the
+	// call ends on its own, or it fires against a call id that is gone.
+	cap *time.Timer
 }
 
 type callRegistry struct {
@@ -48,6 +55,20 @@ func (r *callRegistry) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.calls)
+}
+
+func (r *callRegistry) setCap(callID string, t *time.Timer) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ac, ok := r.calls[callID]
+	if !ok {
+		return false
+	}
+	if ac.cap != nil {
+		ac.cap.Stop()
+	}
+	ac.cap = t
+	return true
 }
 
 func (r *callRegistry) setBridge(callID string, b *Bridge) (*Bridge, bool) {

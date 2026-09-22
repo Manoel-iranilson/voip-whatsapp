@@ -42,7 +42,7 @@ export const CallsPage = ({ sid }: { sid: string }) => {
           description="Dial a number above to start a call."
         />
       )}
-      <OtherCallsList calls={others} />
+      <OtherCallsList sid={sid} calls={others} />
     </div>
   );
 };

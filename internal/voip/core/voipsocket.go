@@ -2,10 +2,17 @@ package core
 
 import (
 	"context"
+	"errors"
 
 	waBinary "go.mau.fi/whatsmeow/binary"
 	"go.mau.fi/whatsmeow/types"
 )
+
+// ErrQueryTimeout is returned by Query when the stanza went out but no matching
+// response came back in time. It lives on the interface's side of the boundary
+// so callers can tell "sent, never acknowledged" from "could not send" without
+// depending on the concrete whatsmeow adapter.
+var ErrQueryTimeout = errors.New("voip: timed out waiting for stanza response")
 
 type VoipSocket interface {
 	OwnPN() types.JID

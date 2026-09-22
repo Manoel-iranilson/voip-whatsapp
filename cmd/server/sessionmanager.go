@@ -20,13 +20,15 @@ type SessionManager struct {
 	waLogger  waLog.Logger
 	log       *slog.Logger
 	maxCalls  int
+	recordDir string
+	recordAll bool
 
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	order    []string
 }
 
-func newSessionManager(ctx context.Context, container *sqlstore.Container, broker *Broker, store *sessionStore, waLogger waLog.Logger, log *slog.Logger, maxCalls int) *SessionManager {
+func newSessionManager(ctx context.Context, container *sqlstore.Container, broker *Broker, store *sessionStore, waLogger waLog.Logger, log *slog.Logger, cfg config) *SessionManager {
 	return &SessionManager{
 		appCtx:    ctx,
 		container: container,
@@ -34,7 +36,9 @@ func newSessionManager(ctx context.Context, container *sqlstore.Container, broke
 		store:     store,
 		waLogger:  waLogger,
 		log:       log,
-		maxCalls:  maxCalls,
+		maxCalls:  cfg.maxCalls,
+		recordDir: cfg.recordDir,
+		recordAll: cfg.recordAll,
 		sessions:  map[string]*Session{},
 	}
 }

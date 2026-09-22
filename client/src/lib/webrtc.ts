@@ -1,6 +1,7 @@
 import { apiPost } from "./api";
 import { float32ToInt16LE, int16LEToFloat32 } from "./pcm";
 import {
+  CAPTURE_FRAME_SIZE,
   CAPTURE_PROCESSOR_NAME,
   CAPTURE_WORKLET_URL,
   PCM_CHANNEL_LABEL,
@@ -36,7 +37,9 @@ export const openCall = async (
   await ctx.resume();
 
   const micSource = ctx.createMediaStreamSource(micStream);
-  const captureNode = new AudioWorkletNode(ctx, CAPTURE_PROCESSOR_NAME);
+  const captureNode = new AudioWorkletNode(ctx, CAPTURE_PROCESSOR_NAME, {
+    processorOptions: { frameSize: CAPTURE_FRAME_SIZE },
+  });
   captureNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
     if (dc.readyState === "open") dc.send(float32ToInt16LE(e.data));
   };

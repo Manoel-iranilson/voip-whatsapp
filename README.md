@@ -142,7 +142,8 @@ cd client && npm install && cd ..
 ### Run
 
 ```bash
-go run ./cmd/server -addr :8080          # add -debug for verbose logs
+go run ./cmd/server                      # listens on 127.0.0.1:8080; add -debug for verbose logs
+go run ./cmd/server -addr :8080          # expose it on the LAN (see Security)
 ```
 
 Live audio works out of the box — the MLow codec is pure Go, so a plain build
@@ -163,16 +164,24 @@ For production, build the static client and serve it from the Go server:
 
 ```bash
 cd client && npm run build && cd ..
-go run ./cmd/server -static client/dist -addr :8080
+go run ./cmd/server -static client/dist
 ```
 
 ### Server flags
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-addr` | `:8080` | HTTP listen address |
+| `-addr` | `127.0.0.1:8080` | HTTP listen address — use `:8080` to expose it on the LAN |
 | `-db` | `wacalls.db` | SQLite session database path |
 | `-static` | `client/dist` | Static client directory (optional) |
+| `-allow-origin` | *(empty)* | Comma-separated browser origins allowed to call the API. Empty means same-origin only; `*` allows any |
+| `-token` | *(empty)* | Shared token the **browser client** presents on `/api`. Empty disables the check |
+| `-device-name` | `ORBSDR` | Name WhatsApp lists under *Linked devices*. **New pairings only** — see below |
+| `-api-key` | *(empty)* | Credential for another system, as `name:secret`. Repeatable — see [API.md](./API.md) |
+| `-webhook-url` | *(empty)* | POST call events here. Empty disables webhooks |
+| `-webhook-secret` | *(empty)* | Signs webhook bodies with HMAC-SHA256 |
+| `-record-dir` | *(empty)* | Directory for call recordings. Empty means recording is unavailable |
+| `-record-all` | `false` | Record every call, including inbound ones (needs `-record-dir`) |
 | `-debug` | `false` | Verbose logging (includes whatsmeow's internal log) |
 | `-max-calls-per-session` | `8` | Max concurrent calls per session (`0` = unlimited) |
 
@@ -196,9 +205,117 @@ originating `sessionId`.
 | `POST` | `/api/sessions/{sid}/calls/{id}/reject` | Reject an incoming call |
 | `DELETE` | `/api/sessions/{sid}/calls/{id}` | End an active call |
 | `GET` | `/api/sessions/{sid}/history` | Recent call history (up to 50 records) |
+| `GET` | `/api/sessions/{sid}/calls/{id}/recording` | Download a call's stereo recording |
+| `GET` | `/api/config` | Server settings the client must agree with (recording mode) |
+| `GET` | `/healthz` | Liveness, unauthenticated — for container healthchecks |
 | `GET` | `/api/events` | Server-sent events (sessions, auth, call lifecycle) |
 
 ---
+
+## The name WhatsApp shows
+
+Paired accounts appear in **WhatsApp → Linked devices** under `-device-name`
+(`WACALLS_DEVICE_NAME`), which defaults to `ORBSDR`. Without it whatsmeow
+registers as `whatsmeow`, the library's name rather than the product's.
+
+**It applies to new pairings only.** The name travels in the registration
+payload, never the login one, so WhatsApp stores it once when the account is
+linked. Accounts that are already connected keep the name they registered under
+— to change those, unlink them in WhatsApp and pair again.
+
+## Docker
+
+```bash
+docker compose up --build
+curl http://localhost:8080/healthz      # {"status":"ok"}
+```
+
+Then open `http://localhost:8080/?token=change-me`.
+
+Every flag is also an environment variable (`WACALLS_ADDR`, `WACALLS_TOKEN`,
+`WACALLS_API_KEY`, …), which is how `compose.yaml` configures it. Two things the
+image gets right and a hand-written stack usually does not:
+
+- **`-addr` must not stay at its default.** The binary listens on
+  `127.0.0.1:8080`, which inside a container is the container's own loopback —
+  unreachable from outside, with no error to show for it. The image sets `:8080`.
+- **`/data` has to be a mounted volume.** It holds `wacalls.db`, the paired
+  WhatsApp credentials, plus the recordings. Without the volume every redeploy
+  wipes both and every account needs pairing again.
+
+### Deploying it anywhere but localhost
+
+Two requirements that fail **silently** — the page loads, pairing works, the call
+rings, and only the audio breaks:
+
+- **HTTPS, on a domain.** The client needs `getUserMedia`, which browsers only
+  expose in a secure context. Over plain HTTP at an IP address the device list is
+  empty and the call never gets a microphone.
+- **`WACALLS_PUBLIC_IP` when behind NAT**, which every container on a bridge
+  network is. Otherwise the server tells the browser to reach it at the
+  container's private address. Publish `WACALLS_UDP_PORT_MIN`–`MAX` to match and
+  open that range on the firewall.
+
+[API.md](./API.md) has the step-by-step for EasyPanel and for Portainer, and the
+check order that isolates a broken deployment fastest.
+
+## Driving WaCalls from another system
+
+Another system (a CRM, n8n, your own backend) can start and track calls over the
+same HTTP API, while a human operator still takes the audio in the browser.
+Give each one its own credential and point the server at a webhook:
+
+```bash
+wacalls-server -addr :8080 \
+  -token "operator-token" \
+  -api-key "crm:$(openssl rand -hex 24)" \
+  -webhook-url "https://yourapp.example/hooks/wacalls" \
+  -webhook-secret "$(openssl rand -hex 32)"
+```
+
+A call started with an API key belongs to **nobody** until an operator presses
+**Pick up** in the client — an integration never carries audio, so it must not
+hold the call. Pass `"operator": "<clientId>"` to reserve one for a specific
+person instead.
+
+**[API.md](./API.md)** has the full flow, the endpoints, the webhook payloads and
+signature verification.
+
+## Recording
+
+Start the server with `-record-dir` and each recorded call produces **one stereo
+16 kHz WAV file** under `<record-dir>/<sessionId>/`:
+
+```
+1761050400000-A1B2C3.wav    left channel: you · right channel: the other party
+```
+
+It plays back as a single conversation, and because the two voices stay on their
+own channels they can still be separated afterwards — useful for transcription
+that has to say who said what.
+
+Outgoing calls are recorded when the request asks for it (`{"record": true}`, which
+is what the **Record** toggle in the dialer sends). `-record-all` records everything
+instead, including incoming calls, which carry no per-call flag. Asking for a
+recording while `-record-dir` is unset is rejected with `400` rather than silently
+ignored.
+
+The dialer shows what the server actually does, which it learns from
+`GET /api/config` (`{"recording": "off" | "optional" | "always"}`): the Record
+button disappears when recording is unavailable, and with `-record-all` it is
+rendered lit and locked, because the operator needs to know they are recording in
+order to tell the other party.
+
+History rows gain a `recording` field with the file name stem, and the file comes
+back from `GET /api/sessions/{sid}/calls/{id}/recording`.
+
+The two legs arrive on different goroutines, at different rates, starting at
+different moments, so a mixer drains both on a fixed 20 ms tick and pads whichever
+side came up short with silence. That shared clock is what keeps the channels on
+one timeline. The recording starts at the first audio rather than at call setup, so
+a call that rings for a while does not open with a stretch of silence.
+
+There is no retention policy: recordings grow until you delete them.
 
 ## Tests
 
@@ -211,9 +328,33 @@ cd client && npm run build    # client type-check + production build
 
 ## Security
 
-The API has **no authentication** — anyone with HTTP access can create accounts, place
-calls, and read history. **Run it only on a trusted LAN.** `wacalls.db` holds WhatsApp
-session credentials (secrets): **do not commit it** and keep it protected.
+The API has **no per-user authentication**: anyone who can reach it and get past the
+checks below can create accounts, place calls, and read history. `wacalls.db` holds
+WhatsApp session credentials (secrets): **do not commit it** and keep it protected.
+
+Three things guard it:
+
+- **Loopback by default.** `-addr` defaults to `127.0.0.1:8080`, so a fresh run is not
+  reachable from the network. Exposing it on the LAN (`-addr :8080`) is a deliberate choice.
+- **Origin check.** Requests carrying a browser `Origin` that is neither same-origin nor
+  listed in `-allow-origin` are rejected with `403` **before the handler runs** — CORS
+  response headers alone would not help, because a cross-origin `POST` with a simple
+  content type needs no preflight and its side effect would still happen. `-allow-origin '*'`
+  turns this off; it is for development only.
+- **Optional shared token.** With `-token <secret>`, every `/api` request must present it
+  as `X-Auth-Token`, `Authorization: Bearer …`, or `?token=` (the last one for `EventSource`,
+  which cannot send headers). Open the client once as `http://host:8080/?token=<secret>`;
+  it stores the token and strips it from the URL.
+
+Calls are also owned: a call belongs to the browser (`X-Client-Id`) that started or
+accepted it, and attaching a media bridge, ending, or rejecting it from another client
+returns `409`.
+
+The defaults are safe for a single machine. For a shared LAN, run it with a token:
+
+```bash
+go run ./cmd/server -addr :8080 -static client/dist -token "$(openssl rand -hex 16)"
+```
 
 ---
 

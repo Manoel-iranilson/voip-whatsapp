@@ -1,0 +1,50 @@
+# Run WaCalls locally with one command:
+#
+#   docker compose up --build
+#
+# Then open http://localhost:8080/?token=change-me
+#
+# This is the single-machine file. A Swarm/Portainer deployment wants host
+# networking so the VoIP relays reach the host's UDP stack directly — see the
+# "Deploying" section of API.md.
+
+services:
+  wacalls:
+    build: .
+    ports:
+      - "8080:8080"
+      # Browser media. The published range must match WACALLS_UDP_PORT_MIN/MAX
+      # below, and be open on the host's firewall.
+      - "50000-50100:50000-50100/udp"
+    environment:
+      # The browser client presents this one.
+      WACALLS_TOKEN: "change-me"
+
+      # Only needed when something other than localhost will place calls. On a
+      # bridge network the server otherwise advertises its private container
+      # address and the audio never connects, even though everything else works.
+      # WACALLS_PUBLIC_IP: "203.0.113.42"
+      WACALLS_UDP_PORT_MIN: "50000"
+      WACALLS_UDP_PORT_MAX: "50100"
+
+      # One credential per system that drives the API. Repeatable on the command
+      # line; a comma-separated list here.
+      # WACALLS_API_KEY: "crm:change-me-too,n8n:and-this-one"
+
+      # WACALLS_WEBHOOK_URL: "https://yourapp.example/hooks/wacalls"
+      # WACALLS_WEBHOOK_SECRET: "sign-the-deliveries"
+
+      # Record every call, not just the ones the dialer asks for.
+      # WACALLS_RECORD_ALL: "true"
+
+      WACALLS_MAX_CALLS_PER_SESSION: "8"
+
+    volumes:
+      # wacalls.db holds the paired WhatsApp credentials. Lose this and every
+      # account has to be paired again by QR code.
+      - wacalls_data:/data
+
+    restart: unless-stopped
+
+volumes:
+  wacalls_data:

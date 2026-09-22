@@ -1,0 +1,42 @@
+# Keep the build context small and never ship secrets or local state into an image.
+
+.git
+.github
+
+# Rebuilt inside the image; copying them in would also break npm ci's platform
+# assumptions.
+client/node_modules
+client/dist
+client/.vite
+client/*.tsbuildinfo
+node_modules
+
+# WhatsApp session credentials and recordings — these belong in the /data volume,
+# never baked into a layer.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+gravacoes/
+recordings/
+/auth/
+/data/
+
+# Local build output
+*.exe
+/dist/
+/bin/
+.gotmp/
+coverage.*
+*.prof
+*.pcap
+*.pcapng
+*.keys
+
+# Docs and editor noise
+*.md
+!README.md
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

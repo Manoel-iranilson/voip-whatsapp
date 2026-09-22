@@ -2,6 +2,7 @@ package call
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -113,7 +114,14 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	}
 	ackNode, err := m.sock.Query(ctx, offer)
 	if err != nil {
-		return err
+		// A timeout is not fatal: the offer is already on the wire and the peer may
+		// well be ringing, so tearing the call down here would leave them ringing
+		// with nobody on this end. Everything after this point is driven by
+		// incoming events anyway. Any other error means the offer never went out.
+		if !errors.Is(err, core.ErrQueryTimeout) {
+			return err
+		}
+		m.log.Warn("no ack for call offer; continuing on incoming events", "call_id", callID)
 	}
 
 	m.mu.Lock()

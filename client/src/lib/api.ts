@@ -1,9 +1,15 @@
+import { getAuthToken } from "./auth-token";
 import { getClientId } from "./client-id";
 
-const baseHeaders = (): HeadersInit => ({
-  "X-Client-Id": getClientId(),
-  "Content-Type": "application/json",
-});
+export const baseHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    "X-Client-Id": getClientId(),
+    "Content-Type": "application/json",
+  };
+  const token = getAuthToken();
+  if (token) headers["X-Auth-Token"] = token;
+  return headers;
+};
 
 export const apiGet = async <T>(path: string): Promise<T> => {
   const r = await fetch(path, { headers: baseHeaders() });

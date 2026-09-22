@@ -14,6 +14,11 @@ import (
 
 func newTestManager(t *testing.T) *SessionManager {
 	t.Helper()
+	return newTestManagerWithConfig(t, config{})
+}
+
+func newTestManagerWithConfig(t *testing.T, cfg config) *SessionManager {
+	t.Helper()
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "mgr_test.db")
 	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
@@ -30,7 +35,9 @@ func newTestManager(t *testing.T) *SessionManager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newSessionManager(ctx, container, NewBroker(), store, waLog.Noop, slog.Default(), 0)
+	broker := NewBroker()
+	broker.history = store
+	return newSessionManager(ctx, container, broker, store, waLog.Noop, slog.Default(), cfg)
 }
 
 func (m *SessionManager) addUnconnected(t *testing.T, name string) *Session {

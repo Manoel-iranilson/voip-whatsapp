@@ -1,0 +1,77 @@
+version: "3.8"
+services:
+  wacalls:
+    image: astraonline/astracalls:v0.0.4
+    command: ["-addr", ":8080", "-static", "/app/client/dist", "-debug"]
+    environment:
+      - WACALLS_PUBLIC_IP=auto
+      - WACALLS_UDP_PORT=50000
+      # Quantas ligações simultâneas por sessão (0 = ilimitado). Edite aqui no Portainer.
+      - WACALLS_MAX_CALLS=8
+      # API key p/ acessar o painel e a API (X-API-Key). Vazio = sem autenticação. TROQUE!
+      - WACALLS_API_KEY=troque-esta-chave
+      # Storage Postgres (1 banco por sessão, estilo WAHA). Conecta no Postgres
+      # local (rede de host). Usuário precisa de permissão CREATE DATABASE.
+      - WACALLS_PG_URL=postgres://wacalls:Mfcd62Wacalls!!@127.0.0.1:5433/postgres?sslmode=disable
+      - WACALLS_PG_NAMESPACE=wacalls
+    networks:
+      - hostnet
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  postgres-wacalls:
+    image: postgres:16-alpine
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=5433"]
+    environment:
+      - POSTGRES_USER=wacalls
+      - POSTGRES_PASSWORD=Mfcd62Wacalls!!
+      - POSTGRES_DB=postgres
+      - PGPORT=5433
+    volumes:
+      - wacalls_pg_data:/var/lib/postgresql/data
+    networks:
+      - hostnet
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  proxy:
+    image: alpine/socat
+    command: "TCP4-LISTEN:8080,fork,reuseaddr TCP4:host.docker.internal:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - network_public
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.wacalls.rule=Host(`seudominio.com.br`)"
+        - "traefik.http.routers.wacalls.entrypoints=websecure"
+        - "traefik.http.routers.wacalls.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.wacalls.loadbalancer.server.port=8080"
+
+networks:
+  hostnet:
+    external: true
+    name: host
+  network_public:
+    external: true
+    name: network_public
+
+volumes:
+  wacalls_data:
+    name: wacalls_data
+  wacalls_pg_data:
+    name: wacalls_pg_data

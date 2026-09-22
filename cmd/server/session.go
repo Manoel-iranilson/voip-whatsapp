@@ -47,11 +47,47 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 	return s
 }
 
-func (s *Session) createCall(callID string) *call.CallManager {
+// createCall registers a new call. When record is true and a recording directory
+// is configured, both legs of its audio are written to disk; a recorder that
+// fails to open is logged and the call proceeds without one, because losing the
+// recording is better than losing the call.
+func (s *Session) createCall(callID string, record bool) *call.CallManager {
 	cm := call.NewCallManager(wa.NewSocket(s.client), s.log)
 	s.wireCall(cm, callID)
-	s.reg.add(callID, &activeCall{cm: cm})
+
+	var rec *callRecorder
+	if record {
+		var err error
+		rec, err = newCallRecorder(s.mgr.recordDir, s.id, callID, s.log)
+		if err != nil {
+			s.log.Error("could not start recording; call continues unrecorded", "call_id", callID, "err", err)
+		}
+	}
+
+	s.reg.add(callID, &activeCall{cm: cm, rec: rec})
 	return cm
+}
+
+// shouldRecord decides whether a call gets recorded. Recording has to be enabled
+// server-side at all; beyond that -record-all covers every call, including
+// inbound ones, which have no per-call flag to carry the request.
+func (s *Session) shouldRecord(requested bool) bool {
+	if s.mgr.recordDir == "" {
+		return false
+	}
+	return requested || s.mgr.recordAll
+}
+
+// recordingBase is the recording file stem of a live call, empty when it is not
+// being recorded. It has to be stamped onto the broker record while the call is
+// still running: by the time history is written the registry entry is already
+// gone, because OnStateChange removes the call before ending it.
+func (s *Session) recordingBase(callID string) string {
+	ac, ok := s.reg.get(callID)
+	if !ok {
+		return ""
+	}
+	return ac.rec.Base()
 }
 
 func (s *Session) wireCall(cm *call.CallManager, callID string) {
@@ -59,6 +95,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		s.mgr.broker.upsertCall(CallRecord{
 			SessionID: s.id, CallID: c.CallID, Direction: "inbound", Peer: c.PeerJid,
 			StartedAt: time.Now().UnixMilli(), Status: StatusRinging,
+			Recording: s.recordingBase(c.CallID),
 		})
 		s.mgr.broker.emitIncoming(s.id, c.CallID, c.PeerJid)
 	}
@@ -76,6 +113,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		rec := CallRecord{
 			SessionID: s.id, CallID: c.CallID, Direction: dir, Peer: c.PeerJid,
 			StartedAt: time.Now().UnixMilli(), Status: mapStatus(c.StateData.State),
+			Recording: s.recordingBase(c.CallID),
 		}
 		if existing != nil {
 			rec.Owner = existing.Owner
@@ -89,16 +127,20 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 	}
 	cm.OnPeerAudio = func(pcm16 []float32) {
 		ac, ok := s.reg.get(callID)
-		if !ok || ac.bridge == nil {
+		if !ok {
 			return
 		}
-		_ = ac.bridge.WritePCM(pcm16)
+		// Record first: the recording must not depend on a browser being attached.
+		ac.rec.WritePeer(pcm16)
+		if ac.bridge != nil {
+			_ = ac.bridge.WritePCM(pcm16)
+		}
 	}
 }
 
-func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo bool) (string, error) {
+func (s *Session) startOutgoing(ctx context.Context, peer types.JID, isVideo, record bool) (string, error) {
 	callID := signaling.GenerateCallID()
-	cm := s.createCall(callID)
+	cm := s.createCall(callID, s.shouldRecord(record))
 	if err := cm.StartCall(ctx, callID, peer, isVideo); err != nil {
 		s.removeCall(callID)
 		return "", err
@@ -124,7 +166,8 @@ func (s *Session) onIncomingOffer(ctx context.Context, evt *events.CallOffer) {
 		s.rejectOffer(ctx, node, evt.From)
 		return
 	}
-	cm := s.createCall(callID)
+	// Inbound calls carry no per-call flag, so they follow -record-all.
+	cm := s.createCall(callID, s.shouldRecord(false))
 	cm.HandleCallOffer(ctx, node, evt.From)
 }
 
@@ -239,14 +282,38 @@ func (s *Session) setBridge(callID string, b *Bridge) {
 	}
 }
 
+// capCallDuration ends a call after d, honouring duration_ms on the start
+// request. A call that ends on its own first stops the timer in removeCall.
+func (s *Session) capCallDuration(callID string, d time.Duration) {
+	timer := time.AfterFunc(d, func() {
+		if _, live := s.reg.get(callID); !live {
+			return
+		}
+		s.log.Info("ending call at its requested duration", "call_id", callID, "after", d)
+		// Tear down explicitly, the way doEndCall does, instead of waiting on the
+		// state-machine callback: a forced end has to land even if the call is in
+		// a state that produces no transition.
+		s.terminateCall(callID, core.EndCallReasonUserEnded)
+		s.removeCall(callID)
+		s.mgr.broker.endCall(callID, string(core.EndCallReasonUserEnded))
+	})
+	if !s.reg.setCap(callID, timer) {
+		timer.Stop() // the call was already gone
+	}
+}
+
 func (s *Session) removeCall(callID string) {
 	ac, ok := s.reg.remove(callID)
 	if !ok {
 		return
 	}
+	if ac.cap != nil {
+		ac.cap.Stop()
+	}
 	if ac.bridge != nil {
 		ac.bridge.Close()
 	}
+	ac.rec.Close()
 }
 
 func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
@@ -259,10 +326,14 @@ func (s *Session) terminateCall(callID string, reason core.EndCallReason) {
 
 func (s *Session) teardownAllCalls() {
 	for _, ac := range s.reg.drain() {
+		if ac.cap != nil {
+			ac.cap.Stop()
+		}
 		_ = ac.cm.EndCall(context.Background(), core.EndCallReasonUserEnded)
 		if ac.bridge != nil {
 			ac.bridge.Close()
 		}
+		ac.rec.Close()
 	}
 }
 
