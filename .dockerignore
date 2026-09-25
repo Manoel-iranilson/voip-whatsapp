@@ -11,6 +11,11 @@ client/.vite
 client/*.tsbuildinfo
 node_modules
 
+# The browser SDK is not part of the image — it is consumed by other front ends.
+# A bare `node_modules` pattern only matches the root one, so these need naming.
+sdk/node_modules
+sdk/dist
+
 # WhatsApp session credentials and recordings — these belong in the /data volume,
 # never baked into a layer.
 *.db

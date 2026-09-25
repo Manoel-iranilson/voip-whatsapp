@@ -418,19 +418,31 @@ covers the HTTPS requirement for you.
 2. **Source** → **GitHub** (or **Git**), pointing at this repository and branch.
    Build method **Dockerfile**, path `./Dockerfile`. The image is built on the
    VPS; nothing needs Docker on your own machine.
-3. **Domains** → add your domain, proxy port **8080**, HTTPS on. Point the
-   domain's DNS at the VPS first so the certificate can be issued. **Never reach
-   it by IP** — the microphone will not work.
-4. **Advanced → Ports**: publish `50000-50100` UDP, target the same.
-5. **Mounts** → volume → mount path `/data`. This holds `wacalls.db`, the paired
+3. **Domains** → add a domain, proxy port **8080**, HTTPS on. **Never reach it by
+   IP** — the microphone will not work. Two ways to get one:
+   - The subdomain EasyPanel generates for the service
+     (`<service>.<instance>.easypanel.host`). It already carries a valid
+     certificate and needs no DNS work, which is enough for the secure context.
+   - Your own domain — point its DNS at the VPS *first*, so the certificate can
+     be issued.
+4. **Advanced → Ports**: publish the media range as UDP, target the same. The
+   field takes one published/target pair at a time and has no range syntax, so
+   `50000-50100` would be 101 entries by hand. One UDP port is used per connected
+   browser, so size the range by how many operators will be on at once — ten
+   entries (`50000`…`50009`) is a reasonable start. Whatever you publish here has
+   to match `WACALLS_UDP_PORT_MIN`/`_MAX` below exactly.
+5. **Advanced → Replicas**: **1**. This service does not scale horizontally —
+   every replica would open the same `wacalls.db` on the volume, contend for the
+   same UDP ports, and hold its own session and SSE state.
+6. **Mounts** → volume → mount path `/data`. This holds `wacalls.db`, the paired
    WhatsApp credentials, plus the recordings. Without it every deploy wipes both
    and every account has to be paired again.
-6. **Environment**:
+7. **Environment**:
 
    ```
    WACALLS_PUBLIC_IP=<the VPS public IP>
    WACALLS_UDP_PORT_MIN=50000
-   WACALLS_UDP_PORT_MAX=50100
+   WACALLS_UDP_PORT_MAX=50009
    WACALLS_TOKEN=<long random string>
    WACALLS_API_KEY=crm:<another long random string>
    WACALLS_ALLOW_ORIGIN=https://your-domain
@@ -438,10 +450,16 @@ covers the HTTPS requirement for you.
    WACALLS_MAX_CALLS_PER_SESSION=8
    ```
 
-7. **Deploy**, then open the UDP range on the VPS firewall:
+   `WACALLS_ADDR`, `WACALLS_DB` and `WACALLS_STATIC` already come from the
+   Dockerfile — leave them alone. `WACALLS_API_KEY` is only for systems calling
+   the API with `X-API-Key`; it must read `name:secret`, and a bare secret aborts
+   startup with `bad -api-key`. `WACALLS_PUBLIC_IP` must be a bare IP address —
+   `auto`, a URL or a host:port is rejected and the server refuses to start.
+
+8. **Deploy**, then open the UDP range on the VPS firewall:
 
    ```bash
-   ufw allow 50000:50100/udp
+   ufw allow 50000:50009/udp
    ```
 
 Updating later is a `git push` plus **Deploy** — EasyPanel rebuilds from the
@@ -449,9 +467,17 @@ Dockerfile.
 
 #### Checking it in the order that isolates a problem fastest
 
+EasyPanel does not publish port 8080 on the host — HTTP reaches the service only
+through its proxy, by domain. `http://<vps-ip>:8080` will not answer, and is not
+meant to.
+
 ```bash
 curl https://your-domain/healthz          # {"status":"ok"} — image up, TLS working
 ```
+
+A 502 or 503 here means the proxy found the service but could not talk to it:
+check that the domain's proxy port is **8080**. A timeout means DNS does not
+point at the VPS, or no domain was added.
 
 Then open `https://your-domain/?token=<your token>` and pair an account by QR;
 that proves the container reaches WhatsApp. Finally place a call with

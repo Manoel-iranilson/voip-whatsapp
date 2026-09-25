@@ -1,42 +1,48 @@
+# Stack Swarm/Portainer do WaCalls.
+#
+# Usa rede de host para que a mídia VoIP (UDP) chegue direto na pilha de rede da
+# máquina, sem passar pela bridge. Por isso não há WACALLS_PUBLIC_IP nem publicação
+# de faixa UDP aqui: o container enxerga os endereços reais do host.
+#
+# Como o serviço fica na rede de host, ele não está na network_public onde o Traefik
+# roteia — daí o serviço `proxy` abaixo, que faz a ponte.
 version: "3.8"
+
 services:
   wacalls:
     image: astraonline/astracalls:v0.0.4
-    command: ["-addr", ":8080", "-static", "/app/client/dist", "-debug"]
     environment:
-      - WACALLS_PUBLIC_IP=auto
-      - WACALLS_UDP_PORT=50000
-      # Quantas ligações simultâneas por sessão (0 = ilimitado). Edite aqui no Portainer.
-      - WACALLS_MAX_CALLS=8
-      # API key p/ acessar o painel e a API (X-API-Key). Vazio = sem autenticação. TROQUE!
-      - WACALLS_API_KEY=troque-esta-chave
-      # Storage Postgres (1 banco por sessão, estilo WAHA). Conecta no Postgres
-      # local (rede de host). Usuário precisa de permissão CREATE DATABASE.
-      - WACALLS_PG_URL=postgres://wacalls:Mfcd62Wacalls!!@127.0.0.1:5433/postgres?sslmode=disable
-      - WACALLS_PG_NAMESPACE=wacalls
-    networks:
-      - hostnet
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == manager
+      # Em container é obrigatório: o binário sozinho escuta em 127.0.0.1, que
+      # dentro do container é inalcançável de fora e não gera erro nenhum.
+      - WACALLS_ADDR=:8080
+      - WACALLS_STATIC=/app/client/dist
 
-  postgres-wacalls:
-    image: postgres:16-alpine
-    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=5433"]
-    environment:
-      - POSTGRES_USER=wacalls
-      - POSTGRES_PASSWORD=Mfcd62Wacalls!!
-      - POSTGRES_DB=postgres
-      - PGPORT=5433
+      # Credenciais das contas do WhatsApp + gravações. Precisam do volume abaixo,
+      # senão todo redeploy exige parear tudo por QR de novo.
+      - WACALLS_DB=/data/wacalls.db
+      - WACALLS_RECORD_DIR=/data/recordings
+
+      # O que o navegador apresenta em ?token=... TROQUE.
+      - WACALLS_TOKEN=troque-este-token
+
+      # Credencial para sistemas externos (header X-API-Key), no formato nome:segredo,
+      # separadas por vírgula. Opcional — remova se só for usar pelo navegador.
+      - WACALLS_API_KEY=crm:troque-esta-chave
+
+      # Ligações simultâneas por sessão (0 = ilimitado).
+      - WACALLS_MAX_CALLS_PER_SESSION=8
+
+      # Seu domínio, não '*'. Vazio = apenas same-origin, que já basta quando o
+      # client é servido pelo próprio serviço.
+      # - WACALLS_ALLOW_ORIGIN=https://seudominio.com.br
     volumes:
-      - wacalls_pg_data:/var/lib/postgresql/data
+      - wacalls_data:/data
     networks:
       - hostnet
     deploy:
       mode: replicated
+      # Não aumente: cada réplica abriria o mesmo SQLite no volume, disputaria as
+      # mesmas portas UDP e manteria seu próprio estado de sessão/SSE.
       replicas: 1
       placement:
         constraints:
@@ -73,5 +79,3 @@ networks:
 volumes:
   wacalls_data:
     name: wacalls_data
-  wacalls_pg_data:
-    name: wacalls_pg_data

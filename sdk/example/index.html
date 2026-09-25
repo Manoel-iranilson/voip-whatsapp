@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WaCalls SDK — exemplo</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #16181d;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #128c7e;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #14161a;
+          --fg: #e8eaed;
+          --muted: #9aa1ab;
+          --line: #2a2e35;
+        }
+      }
+      body {
+        margin: 0;
+        padding: 24px 16px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif;
+      }
+      main { max-width: 34rem; margin: 0 auto; }
+      h1 { font-size: 1.25rem; margin: 0 0 4px; }
+      p.sub { margin: 0 0 24px; color: var(--muted); font-size: 0.9rem; }
+      label { display: block; margin: 12px 0 4px; font-size: 0.82rem; color: var(--muted); }
+      input {
+        width: 100%; box-sizing: border-box; padding: 9px 11px;
+        border: 1px solid var(--line); border-radius: 7px;
+        background: transparent; color: inherit; font: inherit;
+      }
+      .row { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+      button {
+        padding: 9px 16px; border-radius: 7px; border: 1px solid var(--line);
+        background: transparent; color: inherit; font: inherit; cursor: pointer;
+      }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      #status {
+        margin-top: 20px; padding: 12px 14px; border: 1px solid var(--line);
+        border-radius: 7px; font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 0.85rem; white-space: pre-wrap; min-height: 3rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>WaCalls SDK</h1>
+      <p class="sub">
+        Prova de que o áudio funciona fora do painel. Sirva esta página por
+        HTTPS ou localhost, e libere esta origem em <code>WACALLS_ALLOW_ORIGIN</code>.
+      </p>
+
+      <label for="baseUrl">Servidor</label>
+      <input id="baseUrl" placeholder="https://seu-host.easypanel.host" />
+
+      <label for="token">Token do operador</label>
+      <input id="token" type="password" placeholder="WACALLS_TOKEN" />
+
+      <label for="sessionId">ID da sessão</label>
+      <input id="sessionId" placeholder="8bd4016abd8bab..." />
+
+      <label for="phone">Telefone</label>
+      <input id="phone" placeholder="5511999999999" />
+
+      <div class="row">
+        <button id="call" class="primary">Ligar</button>
+        <button id="mute" disabled>Mudo</button>
+        <button id="hangup" disabled>Desligar</button>
+      </div>
+
+      <div id="status">pronto</div>
+      <audio id="remote" autoplay></audio>
+    </main>
+
+    <script type="module">
+      import { WaCallsClient } from "../dist/index.js";
+
+      const $ = (id) => document.getElementById(id);
+      const statusEl = $("status");
+      const log = (line) => {
+        statusEl.textContent = `${line}\n${statusEl.textContent}`.split("\n").slice(0, 8).join("\n");
+      };
+
+      // Keeps the fields filled between reloads. Never do this with the token
+      // in production — it is the credential for the whole account.
+      for (const id of ["baseUrl", "token", "sessionId", "phone"]) {
+        $(id).value = localStorage.getItem(`demo.${id}`) ?? "";
+        $(id).addEventListener("change", () => localStorage.setItem(`demo.${id}`, $(id).value));
+      }
+
+      let call = null;
+
+      const setBusy = (busy) => {
+        $("call").disabled = busy;
+        $("mute").disabled = !busy;
+        $("hangup").disabled = !busy;
+      };
+
+      $("call").addEventListener("click", async () => {
+        setBusy(true);
+        try {
+          const client = new WaCallsClient({
+            baseUrl: $("baseUrl").value.trim(),
+            token: $("token").value.trim(),
+          });
+          log(`clientId ${client.clientId}`);
+
+          call = await client.startAndAttach({
+            sessionId: $("sessionId").value.trim(),
+            phone: $("phone").value.trim(),
+            maxLatencyMs: 400,
+          });
+
+          call.on("state", (s) => {
+            log(`estado: ${s}`);
+            if (s === "ended" || s === "failed") setBusy(false);
+          });
+          call.on("error", (e) => log(`erro: ${e.message}`));
+
+          $("remote").srcObject = call.remoteStream;
+          await $("remote").play().catch(() => {});
+          log("chamada iniciada, aguardando atendimento");
+        } catch (err) {
+          log(`falhou: ${err.message}`);
+          setBusy(false);
+        }
+      });
+
+      $("mute").addEventListener("click", () => {
+        if (!call) return;
+        call.mute(!call.muted);
+        $("mute").textContent = call.muted ? "Falar" : "Mudo";
+        log(call.muted ? "microfone mudo" : "microfone ativo");
+      });
+
+      $("hangup").addEventListener("click", async () => {
+        if (!call) return;
+        await call.end().catch((e) => log(`erro ao desligar: ${e.message}`));
+        setBusy(false);
+      });
+    </script>
+  </body>
+</html>

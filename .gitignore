@@ -36,3 +36,7 @@ Thumbs.db
 *~
 !native/
 !native/*.dll
+
+# SDK build output and deps
+sdk/node_modules/
+sdk/dist/
