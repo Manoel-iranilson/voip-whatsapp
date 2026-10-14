@@ -14,18 +14,17 @@ para a operação do servidor.
 
 ## Instalação
 
-O pacote não está publicado no npm. Use uma das três formas:
+O pacote não está publicado no npm. Use uma das duas formas:
 
 ```bash
-# caminho local, dentro do mesmo monorepo
-npm install file:../wacalls/sdk
-
-# direto do git
-npm install github:Manoel-iranilson/voip-whatsapp#main --workspace sdk
+# caminho local (o script "prepare" compila o dist/ na instalação)
+npm install file:../WaCalls/sdk
 ```
 
 Ou simplesmente **copie `src/` para o seu projeto** — são ~600 linhas sem nenhuma dependência
 de runtime.
+
+Para compilar manualmente dentro do repositório:
 
 ```bash
 cd sdk && npm install && npm run build

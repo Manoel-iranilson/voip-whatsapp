@@ -672,6 +672,17 @@ reloads e dispositivos, e é o que volta no campo `owner` para saber quem atende
 
 ### 11.5 Front-end da plataforma
 
+**Instalar o SDK** — o pacote não está no npm. Instale pelo caminho local (o script `prepare`
+compila o `dist/` na instalação) ou copie `sdk/src/` para o projeto, que não tem dependências
+de runtime:
+
+```bash
+npm install file:../WaCalls/sdk
+```
+
+O front precisa rodar em **HTTPS** (só `localhost` é exceção): sem isso o navegador não libera
+o microfone.
+
 **Provider global** — montado uma vez depois do login, vive enquanto a aba estiver aberta:
 
 ```ts
@@ -732,6 +743,7 @@ Depois de criar, grave o `sid` em `sessoes_wacalls` para associá-lo à equipe.
 | Histórico limitado a 50 linhas | não serve como histórico do CRM | banco próprio + reconciliação |
 | Webhook best-effort | eventos podem se perder | reconciliação pelo histórico |
 | Sem exclusão de gravação pela API | disco do servidor só cresce | rotina de limpeza na VPS |
+| Sem STUN/TURN | o navegador precisa alcançar direto a faixa UDP pública do servidor; redes que bloqueiam UDP (comum em empresas) não conectam o áudio | liberar a faixa UDP na rede do atendente; TURN exige mudança no servidor |
 | Recebidas só gravam em `always` | não dá para gravar uma recebida específica | `WACALLS_RECORD_ALL=true` |
 
 ### 11.7 Ordem sugerida e testes
