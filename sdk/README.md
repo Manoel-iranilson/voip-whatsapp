@@ -86,6 +86,21 @@ wacalls.events.on("incoming", async ({ sessionId, id, peer }) => {
 });
 ```
 
+### Sessões e QR code
+
+O QR nunca volta na resposta HTTP: ele chega pelo stream de eventos. Conecte `events` antes.
+
+```ts
+wacalls.events.connect();
+wacalls.events.on("session-qr", ({ sessionId, qr }) => renderQr(qr)); // string para uma lib de QR
+wacalls.events.on("auth-state", ({ sessionId, paired }) => paired && fecharModal());
+
+const sid = await wacalls.createSession("Comercial"); // já dispara o pareamento
+await wacalls.pairSession(sid);    // novo QR (400 se já estiver pareada)
+await wacalls.logoutSession(sid);  // desconecta, mantém a sessão
+await wacalls.deleteSession(sid);  // apaga; gravações e histórico ficam no disco
+```
+
 ### React
 
 ```tsx

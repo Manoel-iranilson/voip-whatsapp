@@ -44,6 +44,28 @@ export class WaCallsClient {
     return id;
   }
 
+  /**
+   * Requests a fresh QR for an unpaired session. Like `createSession`, the QR
+   * arrives on the event stream as `session-qr`, not in this response. Fails
+   * with 400 when the session is already paired.
+   */
+  async pairSession(sessionId: string): Promise<void> {
+    await this.transport.post(`/api/sessions/${sessionId}/pair`, {});
+  }
+
+  /** Disconnects the WhatsApp account but keeps the session so it can be paired again. */
+  async logoutSession(sessionId: string): Promise<void> {
+    await this.transport.post(`/api/sessions/${sessionId}/logout`, {});
+  }
+
+  /**
+   * Disconnects and deletes the session. Its recordings and history rows stay
+   * on the server and become unreachable through the API.
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.transport.del(`/api/sessions/${sessionId}`);
+  }
+
   /** `off`, `optional` or `always` — whether `record: true` will do anything. */
   async recordingMode(): Promise<RecordingMode> {
     const { recording } = await this.transport.get<{ recording: RecordingMode }>("/api/config");

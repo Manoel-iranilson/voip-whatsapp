@@ -27,6 +27,7 @@ export WACALLS_KEY="o-segredo-depois-dos-dois-pontos-da-sua-api-key"
 8. [Receita completa](#8-receita-completa)
 9. [Referência rápida](#9-referência-rápida)
 10. [Checklist de produção](#10-checklist-de-produção)
+11. [Roteiro: integrar numa plataforma web](#11-roteiro-integrar-numa-plataforma-web)
 
 ---
 
@@ -588,3 +589,158 @@ curl -s -o "$CALL_ID.wav" -H "X-API-Key: $WACALLS_KEY" \
 - [ ] HTTPS com certificado válido. Sem isso o navegador não libera o microfone e não há áudio.
 - [ ] Política de retenção das gravações definida e implementada no seu lado.
 - [ ] Webhook tratado como best-effort; histórico como fonte de verdade.
+
+---
+
+## 11. Roteiro: integrar numa plataforma web
+
+O que um produto web (CRM, sistema de atendimento) precisa construir para que os atendentes
+liguem, atendam, consultem o histórico e ouçam as gravações sem nunca abrir o painel do WaCalls.
+As seções anteriores descrevem cada peça; esta diz onde cada uma entra.
+
+### 11.1 Divisão de responsabilidades
+
+| Camada | Credencial | Responsável por |
+|---|---|---|
+| **Back-end da plataforma** | `WACALLS_API_KEY` — nunca sai do servidor | receber webhooks, gravar o histórico no próprio banco, copiar gravações, gerenciar sessões |
+| **Front-end da plataforma** | `WACALLS_TOKEN`, entregue pelo back-end só a quem é atendente | áudio (WebRTC via [SDK](sdk/README.md)), eventos em tempo real, discar, atender, encerrar |
+| **Banco da plataforma** | — | **fonte de verdade do histórico**. O WaCalls só expõe as 50 ligações mais recentes por sessão |
+
+### 11.2 Servidor WaCalls
+
+Além do [checklist de produção](#10-checklist-de-produção):
+
+```
+WACALLS_ALLOW_ORIGIN=https://app.suaplataforma.com
+WACALLS_WEBHOOK_URL=https://api.suaplataforma.com/hooks/wacalls
+WACALLS_WEBHOOK_SECRET=<segredo longo>
+WACALLS_API_KEY=plataforma:<segredo longo>
+WACALLS_TOKEN=<segredo longo>
+```
+
+Sem `WACALLS_ALLOW_ORIGIN`, toda requisição do navegador volta `403 origin not allowed`. Não use
+`*`. Defina `WACALLS_RECORD_ALL=true` se as chamadas **recebidas** também precisam ser gravadas.
+
+### 11.3 Banco da plataforma
+
+| Tabela | Colunas essenciais |
+|---|---|
+| `chamadas` | `session_id`, `call_id` (único por sessão), `direction`, `peer`, `lead_id`, `usuario_id`, `status`, `started_at`, `ended_at`, `end_reason`, `recording` (nome-base), `recording_storage_key` |
+| `webhook_entregas` | `delivery` (chave primária), `recebido_em` — para idempotência |
+| `sessoes_wacalls` | `session_id` ↔ empresa/equipe da plataforma — qual conta de WhatsApp cada equipe usa |
+
+### 11.4 Back-end da plataforma
+
+**Webhook** (`POST /hooks/wacalls`)
+
+1. Ler o **corpo bruto** e validar `X-WaCalls-Signature` ([código](#webhook)). Assinatura inválida → `401`.
+2. Se o `X-WaCalls-Delivery` já está em `webhook_entregas`, responder `200` e parar.
+3. Fazer upsert em `chamadas` por (`sessionId`, `callId`) com os campos do payload.
+4. Em `call.ended` com `recording` presente, enfileirar a cópia da gravação.
+5. Responder `2xx` rápido — o trabalho pesado vai para a fila. Um `4xx` que não seja `429` não é
+   retentado.
+
+Com várias empresas no mesmo servidor, roteie pelo `sessionId`: há **um único webhook** para
+o servidor inteiro.
+
+**Cópia da gravação** (job assíncrono)
+
+1. `GET /api/sessions/{sid}/calls/{id}/recording` com `X-API-Key` ([§7.4](#74-baixar)).
+2. Enviar para o storage da plataforma (S3, Supabase Storage etc.) e salvar a chave em
+   `recording_storage_key`.
+3. `404 recording file is gone` → marcar como perdida, não retentar.
+4. O arquivo continua no disco do WaCalls: **não existe endpoint para apagá-lo**. A limpeza é
+   uma rotina na VPS, fora da API ([§7.7](#77-retenção-não-existe)).
+
+**Reconciliação** (cron a cada poucos minutos)
+
+Webhooks são descartados quando a fila interna enche. Para cada sessão, leia
+`GET /api/sessions/{sid}/history` e faça upsert das linhas que faltam ou estão desatualizadas.
+
+**Configuração para o front-end** (`GET /api/telefonia/config`, autenticado)
+
+Devolve `{ baseUrl, token, clientId }` somente para usuários com papel de atendente.
+O `clientId` deve ser derivado do usuário da plataforma (ex.: `user-<uuid>`) — estável entre
+reloads e dispositivos, e é o que volta no campo `owner` para saber quem atendeu.
+
+**Vínculo com o CRM**
+
+- `peer` vem como JID (`5511999999999@s.whatsapp.net`): remova o sufixo e compare com o telefone
+  do lead já normalizado.
+- `owner` → `usuario_id` pelo mapeamento do `clientId`. Não existe endpoint que liste operadores
+  conectados; o mapeamento é da plataforma.
+
+### 11.5 Front-end da plataforma
+
+**Provider global** — montado uma vez depois do login, vive enquanto a aba estiver aberta:
+
+```ts
+const { baseUrl, token, clientId } = await api.get("/api/telefonia/config");
+const wacalls = new WaCallsClient({ baseUrl, token, clientId });
+wacalls.events.connect();
+```
+
+**Discar** — botão "Ligar" na ficha do lead:
+
+```ts
+const call = await wacalls.startAndAttach({
+  sessionId, phone: lead.telefone, record: true, maxLatencyMs: 400,
+});
+audioEl.srcObject = call.remoteStream;
+```
+
+Barra de chamada com estado (`connecting → connected → ended | failed`), cronômetro, mudo
+(`call.mute`), encerrar (`call.end`) e troca de microfone (`call.setMicDevice`). Mensagens
+para os erros de [§4](#erros): `409` já em chamada, `429` limite atingido, `503` conta
+desconectada, e permissão de microfone negada.
+
+**Receber**
+
+```ts
+wacalls.events.on("incoming", ({ sessionId, id, peer }) => abrirModal({ sessionId, id, peer }));
+wacalls.events.on("incoming-claimed", ({ id }) => fecharModal(id)); // outro atendente pegou
+// Atender: await wacalls.answer({ sessionId, callId: id })
+// Recusar: await wacalls.reject(sessionId, id)
+```
+
+Ligações disparadas pelo back-end ou por automação nascem sem dono: liste as de `call-list`
+com `owner === null` e ofereça `wacalls.pickUp({ sessionId, callId })`.
+
+**Histórico e gravações** — a aba "Ligações" do lead lê do **banco da plataforma**, e o player
+toca do **storage da plataforma**. Não use `recordingUrl()` do SDK em produção: ele coloca o
+token na URL.
+
+**Administração de sessões** — tela para quem gerencia as contas de WhatsApp:
+
+```ts
+wacalls.events.on("session-qr", ({ sessionId, qr }) => mostrarQr(sessionId, qr)); // string → lib de QR
+wacalls.events.on("auth-state", ({ sessionId, paired }) => paired && fecharQr(sessionId));
+
+const sid = await wacalls.createSession("Comercial"); // já dispara o pareamento
+await wacalls.pairSession(sid);    // novo QR
+await wacalls.logoutSession(sid);  // desconecta, mantém a sessão
+await wacalls.deleteSession(sid);  // apaga a sessão
+```
+
+Depois de criar, grave o `sid` em `sessoes_wacalls` para associá-lo à equipe.
+
+### 11.6 Limites que a plataforma herda
+
+| Limite | Consequência | Contorno |
+|---|---|---|
+| Um único `WACALLS_TOKEN` para todos os atendentes | o token fica no navegador e permite apagar sessões e baixar qualquer gravação; não há auditoria por pessoa | restringir quem recebe o token; auditoria individual exige mudança no servidor |
+| Histórico limitado a 50 linhas | não serve como histórico do CRM | banco próprio + reconciliação |
+| Webhook best-effort | eventos podem se perder | reconciliação pelo histórico |
+| Sem exclusão de gravação pela API | disco do servidor só cresce | rotina de limpeza na VPS |
+| Recebidas só gravam em `always` | não dá para gravar uma recebida específica | `WACALLS_RECORD_ALL=true` |
+
+### 11.7 Ordem sugerida e testes
+
+| Etapa | Pronto quando |
+|---|---|
+| 1. Servidor configurado | `sdk/example/index.html` servido da origem liberada faz uma ligação com áudio nos dois sentidos |
+| 2. Provider + discar | ligação pela ficha do lead; mudo e encerrar funcionam; fechar a aba derruba a chamada |
+| 3. Webhook + banco + reconciliação | assinatura inválida é recusada; reenviar o mesmo `delivery` não duplica; ligação aparece no histórico do lead |
+| 4. Receber | chamada recebida com dois atendentes online: só um atende e o modal fecha no outro |
+| 5. Gravações | após `call.ended`, o arquivo está no storage e toca na ficha; canal esquerdo = atendente, direito = cliente |
+| 6. Sessões | criar sessão pela tela, escanear o QR, estado muda para pareada |
