@@ -195,6 +195,10 @@ func (s *Session) handleEvent(rawEvt any) {
 		s.setAuth(AuthSnapshot{State: "open", Paired: true})
 	case *events.LoggedOut:
 		s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
+	case *events.ClientOutdated:
+		s.log.Error("WhatsApp rejected the connection as outdated (405); update go.mau.fi/whatsmeow and redeploy")
+	case *events.ConnectFailure:
+		s.log.Error("WhatsApp refused the connection", "reason", evt.Reason, "message", evt.Message)
 	case *events.CallOffer:
 		s.onIncomingOffer(ctx, evt)
 	case *events.CallAccept:
@@ -245,6 +249,13 @@ func (s *Session) startPairing(ctx context.Context) error {
 				}
 				s.setAuth(AuthSnapshot{State: "open", Paired: true})
 			case "timeout":
+				s.log.Info("QR pairing timed out; reconnect to get a new QR")
+				s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
+			default:
+				// err-client-outdated, err-unexpected-state, error, ...: pairing is over
+				// and no QR will follow, so say why instead of leaving the panel
+				// waiting forever.
+				s.log.Error("QR pairing failed", "event", evt.Event, "err", evt.Error)
 				s.setAuth(AuthSnapshot{State: "logged_out", Paired: false})
 			}
 		}

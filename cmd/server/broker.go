@@ -329,6 +329,9 @@ func (b *Broker) serveSSE(w http.ResponseWriter, r *http.Request, clientID strin
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Tells a buffering reverse proxy (nginx and friends) to pass events through
+	// as they are written; otherwise a QR can sit in its buffer until it expires.
+	w.Header().Set("X-Accel-Buffering", "no")
 	// CORS is decided by the origin policy in front of this handler; setting a
 	// wildcard here would hand every event stream to any origin.
 
