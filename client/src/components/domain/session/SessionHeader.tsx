@@ -4,21 +4,8 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { logoutSession, pairSession } from "@/services/sessions";
-import type { SessionInfo, SessionState } from "@/types/session";
-
-const statusLabel: Record<SessionState, string> = {
-  open: "Connected",
-  qr: "Scan QR",
-  connecting: "Connecting…",
-  logged_out: "Disconnected",
-};
-
-const statusVariant: Record<SessionState, "success" | "secondary" | "muted" | "destructive"> = {
-  open: "success",
-  qr: "secondary",
-  connecting: "muted",
-  logged_out: "destructive",
-};
+import { statusLabel, statusVariant } from "@/utils/session";
+import type { SessionInfo } from "@/types/session";
 
 export const SessionHeader = ({ session }: { session: SessionInfo }) => {
   const [busy, setBusy] = useState(false);
@@ -43,12 +30,12 @@ export const SessionHeader = ({ session }: { session: SessionInfo }) => {
       {session.paired ? (
         <Button variant="outline" size="sm" disabled={busy} onClick={() => run(() => logoutSession(session.id))}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
-          Disconnect
+          Desconectar
         </Button>
       ) : (
         <Button size="sm" disabled={busy} onClick={() => run(() => pairSession(session.id))}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
-          Reactivate
+          Conectar
         </Button>
       )}
     </div>

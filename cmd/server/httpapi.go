@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ func (s *server) routes() http.Handler {
 	api.HandleFunc("DELETE /api/sessions/{sid}/calls/{id}", s.handleEndCall)
 	api.HandleFunc("GET /api/sessions/{sid}/history", s.handleHistory)
 	api.HandleFunc("GET /api/sessions/{sid}/calls/{id}/recording", s.handleRecording)
+	api.HandleFunc("GET /api/history", s.handleAllHistory)
+	api.HandleFunc("GET /api/auth/check", s.handleAuthCheck)
 
 	api.HandleFunc("GET /api/config", s.handleConfig)
 	api.HandleFunc("GET /api/events", s.handleEvents)
@@ -186,8 +189,30 @@ func (s *server) handleEndCall(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if sess := s.sessionByID(w, r.PathValue("sid")); sess != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"rows": s.broker.historyRows(r.Context(), sess.id, 50)})
+		writeJSON(w, http.StatusOK, map[string]any{"rows": s.broker.historyRows(r.Context(), sess.id, historyLimit(r, 50))})
 	}
+}
+
+// handleAllHistory serves ended calls across every session, newest first, for
+// the panel's history page. ?session= narrows it to one session.
+func (s *server) handleAllHistory(w http.ResponseWriter, r *http.Request) {
+	sid := r.URL.Query().Get("session")
+	writeJSON(w, http.StatusOK, map[string]any{"rows": s.broker.historyRows(r.Context(), sid, historyLimit(r, 100))})
+}
+
+// handleAuthCheck lets the panel's login screen validate a token: it sits behind
+// withAuth, so reaching it at all means the credential was accepted.
+func (s *server) handleAuthCheck(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// historyLimit reads ?limit=, falling back to def and capping at 500.
+func historyLimit(r *http.Request, def int) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil || n <= 0 {
+		return def
+	}
+	return min(n, 500)
 }
 
 // handleRecording serves a finished call's recording: one stereo file with the

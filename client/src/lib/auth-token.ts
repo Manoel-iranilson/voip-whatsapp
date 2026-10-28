@@ -23,3 +23,15 @@ export const getAuthToken = (): string => {
     return "";
   }
 };
+
+export const setAuthToken = (token: string): void => {
+  try {
+    localStorage.setItem(KEY, token);
+  } catch {}
+};
+
+export const clearAuthToken = (): void => {
+  try {
+    localStorage.removeItem(KEY);
+  } catch {}
+};

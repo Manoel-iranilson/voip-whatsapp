@@ -44,7 +44,7 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
 
   return (
     <div className="flex h-full flex-col gap-2 p-3">
-      <p className="px-2 pt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Accounts</p>
+      <p className="px-2 pt-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Sessões</p>
       <div className="flex-1 space-y-1 overflow-y-auto">
         {sessions.map((s) => (
           <div
@@ -71,25 +71,25 @@ export const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
                 setToDelete(s);
               }}
               className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-              aria-label={`Delete ${s.name}`}
+              aria-label={`Excluir ${s.name}`}
             >
               <Trash2 className="h-4 w-4" />
             </button>
           </div>
         ))}
-        {sessions.length === 0 && <p className="px-2 text-sm text-muted-foreground">No accounts yet.</p>}
+        {sessions.length === 0 && <p className="px-2 text-sm text-muted-foreground">Nenhuma sessão ainda.</p>}
       </div>
       <Button variant="outline" className="w-full" onClick={onNew} disabled={creating}>
         {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-        New session
+        Nova sessão
       </Button>
 
       <ConfirmDialog
         open={!!toDelete}
         onOpenChange={(o) => !o && setToDelete(null)}
-        title="Delete account?"
-        description={toDelete ? `${toDelete.name} will be logged out and removed.` : undefined}
-        confirmLabel="Delete"
+        title="Excluir sessão?"
+        description={toDelete ? `${toDelete.name} será desconectada e removida.` : undefined}
+        confirmLabel="Excluir"
         destructive
         onConfirm={() => {
           if (toDelete) void remove(toDelete.id);
