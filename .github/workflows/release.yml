@@ -45,7 +45,7 @@ jobs:
         run: |
           out="wacalls-server-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
           go build -trimpath \
-            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME} -X main.commit=${GITHUB_SHA::7} -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -o "dist/${out}" ./cmd/server
 
       - name: Upload artifact

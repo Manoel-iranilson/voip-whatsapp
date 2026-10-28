@@ -23,7 +23,14 @@ COPY . .
 # pure Go — so the result is a static binary that needs nothing from the base
 # image but certificates.
 ENV CGO_ENABLED=0
-RUN go build -trimpath -ldflags "-s -w" -o /out/wacalls-server ./cmd/server
+# .git is not in the build context, so the commit has to come in as a build arg
+# (EasyPanel: Build → Build arguments, or `docker build --build-arg
+# GIT_COMMIT=$(git rev-parse --short HEAD)`). The build time is always stamped,
+# which on its own is enough to tell a fresh deploy from a stale one.
+ARG GIT_COMMIT=unknown
+RUN go build -trimpath \
+      -ldflags "-s -w -X main.commit=${GIT_COMMIT} -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      -o /out/wacalls-server ./cmd/server
 
 # ---------------------------------------------------------------- runtime
 FROM alpine:3.22

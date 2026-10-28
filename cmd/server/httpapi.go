@@ -32,6 +32,7 @@ func (s *server) routes() http.Handler {
 	api.HandleFunc("GET /api/sessions/{sid}/calls/{id}/recording", s.handleRecording)
 	api.HandleFunc("GET /api/history", s.handleAllHistory)
 	api.HandleFunc("GET /api/auth/check", s.handleAuthCheck)
+	api.HandleFunc("GET /api/version", s.handleVersion)
 
 	api.HandleFunc("GET /api/config", s.handleConfig)
 	api.HandleFunc("GET /api/events", s.handleEvents)

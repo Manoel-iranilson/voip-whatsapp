@@ -8,6 +8,7 @@ import { logout } from "@/stores/auth";
 import { setView, useView, type View } from "@/stores/view";
 import { Sidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
+import { VersionBadge } from "./VersionBadge";
 
 const tabs: { view: View; label: string; icon: typeof Phone }[] = [
   { view: "sessions", label: "Sessões", icon: LayoutGrid },
@@ -59,6 +60,7 @@ export const AppShell = ({ children }: { children: ReactNode }) => {
           ))}
         </nav>
         <div className="flex items-center gap-1">
+          <VersionBadge />
           <ThemeToggle />
           {getAuthToken() && (
             <Button variant="ghost" size="icon" onClick={logout} aria-label="Sair" title="Sair">
