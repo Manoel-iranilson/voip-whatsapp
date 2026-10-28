@@ -87,6 +87,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Also before any client exists: newServer restores and connects the saved
+	// sessions, and each one reads the version as it connects.
+	refreshWAVersion(ctx, log)
+
 	srv, err := newServer(ctx, cfg, log)
 	if err != nil {
 		log.Error("startup failed", "err", err)
