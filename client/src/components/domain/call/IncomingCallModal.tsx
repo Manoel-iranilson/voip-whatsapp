@@ -5,19 +5,22 @@ import { Button } from "@/components/ui/button";
 import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useAcceptCall } from "@/hooks/useAcceptCall";
+import { getAudioContext } from "@/lib/audio-context";
 import { useRejectCall } from "@/hooks/useRejectCall";
 
 type RingHandle = { stop: () => void };
 
 const startRingLoop = (): RingHandle | null => {
-  const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AC) return null;
+  // The shared context: it is already unlocked by earlier clicks, so the ring
+  // is audible on Safari, and iOS does not run out of contexts.
   let ctx: AudioContext;
   try {
-    ctx = new AC();
+    ctx = getAudioContext();
   } catch {
     return null;
   }
+  const out = ctx.createGain();
+  out.connect(ctx.destination);
   let cancelled = false;
   const playToneAt = (when: number, durationSec: number, freq: number, gainVal = 0.18) => {
     const osc = ctx.createOscillator();
@@ -29,7 +32,7 @@ const startRingLoop = (): RingHandle | null => {
     gain.gain.linearRampToValueAtTime(gainVal, t + 0.02);
     gain.gain.linearRampToValueAtTime(gainVal, t + durationSec - 0.02);
     gain.gain.linearRampToValueAtTime(0, t + durationSec);
-    osc.connect(gain).connect(ctx.destination);
+    osc.connect(gain).connect(out);
     osc.start(t);
     osc.stop(t + durationSec + 0.05);
   };
@@ -43,7 +46,7 @@ const startRingLoop = (): RingHandle | null => {
   return {
     stop: () => {
       cancelled = true;
-      void ctx.close().catch(() => {});
+      out.disconnect();
     },
   };
 };

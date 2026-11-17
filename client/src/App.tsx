@@ -16,6 +16,7 @@ import { ensureCallsWired } from "@/stores/calls";
 import { checkAuth, useAuth } from "@/stores/auth";
 import { useTheme } from "@/stores/theme";
 import { useView } from "@/stores/view";
+import { installCallSounds } from "@/lib/call-sounds";
 
 const CallsView = () => {
   const sessions = useSessions((s) => s.sessions);
@@ -55,6 +56,7 @@ export const App = () => {
     if (status !== "ok") return;
     ensureSessionsWired();
     ensureCallsWired();
+    installCallSounds();
   }, [status]);
 
   if (status === "checking") {

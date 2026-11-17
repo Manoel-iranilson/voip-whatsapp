@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { PhoneOff } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { attachMeter } from "@/lib/audio-meter";
+import { setOutputDevice } from "@/lib/webrtc";
 import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useEndCall } from "@/hooks/useEndCall";
@@ -37,7 +38,6 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const [, force] = useState(0);
   const [micDb, setMicDb] = useState(-60);
   const [peerDb, setPeerDb] = useState(-60);
-  const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     const t = setInterval(() => force((n) => n + 1), 1000);
@@ -46,27 +46,16 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
 
   useEffect(() => {
     if (!conn) return;
-    const offMic = attachMeter(conn.micStream, setMicDb);
-    let offPeer: (() => void) | null = null;
-    const wait = setInterval(() => {
-      if (conn.remoteStream && audioRef.current) {
-        audioRef.current.srcObject = conn.remoteStream;
-        audioRef.current.play().catch(() => {});
-        offPeer = attachMeter(conn.remoteStream, setPeerDb);
-        clearInterval(wait);
-      }
-    }, 200);
+    const offMic = attachMeter(conn.micAnalyser, setMicDb);
+    const offPeer = attachMeter(conn.peerAnalyser, setPeerDb);
     return () => {
       offMic();
-      offPeer?.();
-      clearInterval(wait);
+      offPeer();
     };
   }, [conn]);
 
   useEffect(() => {
-    const el = audioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
-    if (!el || !outDeviceId || typeof el.setSinkId !== "function") return;
-    el.setSinkId(outDeviceId).catch(() => {});
+    if (conn) setOutputDevice(outDeviceId);
   }, [outDeviceId, conn]);
 
   return (
@@ -95,7 +84,6 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
         </div>
         <Meter label="Mic" db={micDb} />
         <Meter label="Peer" db={peerDb} />
-        <audio ref={audioRef} autoPlay />
       </CardContent>
     </Card>
   );
