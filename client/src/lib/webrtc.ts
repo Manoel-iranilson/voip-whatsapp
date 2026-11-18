@@ -15,7 +15,31 @@ export type OpenCall = {
   /** Taps for the level meters, in the shared AudioContext. */
   micAnalyser: AnalyserNode;
   peerAnalyser: AnalyserNode;
+  /** Once-a-second receive diagnostics; returns an unsubscribe function. */
+  onStats: (fn: (s: CallStats) => void) => () => void;
   close: () => void;
+};
+
+/**
+ * Where the peer's audio is getting cut. If `maxGapMs` is high, frames are
+ * reaching the browser late (network, server or data channel). If gaps are low
+ * but `underruns` still climbs, the browser's audio output is the problem.
+ */
+export type CallStats = {
+  /** Frames received in the last second (50 expected for 20 ms frames). */
+  frames: number;
+  /** Audio received in the last second, in ms (about 1000 expected). */
+  receivedMs: number;
+  /** Longest wait between two frames in the last second. */
+  maxGapMs: number;
+  /** Times playback ran dry in the last second. */
+  underruns: number;
+  bufferMs: number;
+  minBufferMs: number;
+  targetMs: number;
+  /** The context's real rate and output latency, which differ per device. */
+  sampleRate: number;
+  outputLatencyMs: number;
 };
 
 const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
@@ -95,8 +119,37 @@ export const openCall = async (
     // MediaStreamDestination into an <audio> element is silent on iOS Safari.
     playbackNode.connect(ctx.destination);
     playbackNode.connect(peerAnalyser);
+    let frames = 0;
+    let receivedSamples = 0;
+    let maxGap = 0;
+    let lastArrival = 0;
     dc.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-      playbackNode.port.postMessage(int16LEToFloat32(e.data));
+      const now = performance.now();
+      if (lastArrival) maxGap = Math.max(maxGap, now - lastArrival);
+      lastArrival = now;
+      frames += 1;
+      const pcm = int16LEToFloat32(e.data);
+      receivedSamples += pcm.length;
+      // Transfer instead of copy: less work on the main thread per frame.
+      playbackNode.port.postMessage(pcm, [pcm.buffer]);
+    };
+
+    const statsListeners = new Set<(s: CallStats) => void>();
+    playbackNode.port.onmessage = (e: MessageEvent<Omit<CallStats, "frames" | "receivedMs" | "maxGapMs" | "sampleRate" | "outputLatencyMs">>) => {
+      // A gap still open counts too, or a total stall would read as zero.
+      const openGap = lastArrival ? performance.now() - lastArrival : 0;
+      const stats: CallStats = {
+        ...e.data,
+        frames,
+        receivedMs: Math.round(receivedSamples / (SAMPLE_RATE / 1000)),
+        maxGapMs: Math.round(Math.max(maxGap, openGap)),
+        sampleRate: ctx.sampleRate,
+        outputLatencyMs: Math.round(((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * 1000),
+      };
+      frames = 0;
+      receivedSamples = 0;
+      maxGap = 0;
+      for (const fn of statsListeners) fn(stats);
     };
     nodes.push(micSource, captureNode, micAnalyser, playbackNode, peerAnalyser);
 
@@ -123,7 +176,12 @@ export const openCall = async (
       micStream,
       micAnalyser,
       peerAnalyser,
+      onStats: (fn) => {
+        statsListeners.add(fn);
+        return () => statsListeners.delete(fn);
+      },
       close: () => {
+        statsListeners.clear();
         try {
           micStream.getTracks().forEach((t) => t.stop());
         } catch {}

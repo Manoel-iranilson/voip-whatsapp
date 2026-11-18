@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { attachMeter } from "@/lib/audio-meter";
-import { setOutputDevice } from "@/lib/webrtc";
+import { setOutputDevice, type CallStats } from "@/lib/webrtc";
 import { useCalls } from "@/stores/calls";
 import { useDevices } from "@/stores/devices";
 import { useEndCall } from "@/hooks/useEndCall";
@@ -38,6 +38,7 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
   const [, force] = useState(0);
   const [micDb, setMicDb] = useState(-60);
   const [peerDb, setPeerDb] = useState(-60);
+  const [stats, setStats] = useState<CallStats | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => force((n) => n + 1), 1000);
@@ -48,9 +49,11 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
     if (!conn) return;
     const offMic = attachMeter(conn.micAnalyser, setMicDb);
     const offPeer = attachMeter(conn.peerAnalyser, setPeerDb);
+    const offStats = conn.onStats(setStats);
     return () => {
       offMic();
       offPeer();
+      offStats();
     };
   }, [conn]);
 
@@ -84,6 +87,13 @@ export const CallCard = ({ call }: { call: CallSummary }) => {
         </div>
         <Meter label="Mic" db={micDb} />
         <Meter label="Peer" db={peerDb} />
+        {stats && (
+          // Temporary diagnostics for choppy audio; see CallStats in webrtc.ts.
+          <p className="font-mono text-[11px] leading-tight text-muted-foreground">
+            recv {stats.receivedMs}ms/{stats.frames}f · gap {stats.maxGapMs}ms · cortes {stats.underruns} · buf{" "}
+            {stats.minBufferMs}-{stats.bufferMs}/{stats.targetMs}ms · {stats.sampleRate}Hz · out {stats.outputLatencyMs}ms
+          </p>
+        )}
       </CardContent>
     </Card>
   );

@@ -44,6 +44,10 @@ class PlaybackProcessor extends AudioWorkletProcessor {
     this.last = 0;
     this.fade = 0;
     this.closed = false;
+    // Diagnostics, reported to the page once a second.
+    this.underruns = 0;
+    this.minLevel = Infinity;
+    this.statsAt = 0;
     this.port.onmessage = (e) => {
       const data = e.data;
       if (data === "close") {
@@ -67,6 +71,22 @@ class PlaybackProcessor extends AudioWorkletProcessor {
     this.fade = FADE;
     this.smoothSamples = 0;
     this.target = Math.min(MAX_TARGET, this.target + GROW_STEP);
+    this.underruns += 1;
+  }
+
+  report(frames) {
+    if (this.playing) this.minLevel = Math.min(this.minLevel, this.available);
+    this.statsAt += frames;
+    if (this.statsAt < sampleRate) return;
+    this.statsAt = 0;
+    this.port.postMessage({
+      underruns: this.underruns,
+      bufferMs: Math.round(this.available / MS),
+      minBufferMs: this.minLevel === Infinity ? 0 : Math.round(this.minLevel / MS),
+      targetMs: Math.round(this.target / MS),
+    });
+    this.underruns = 0;
+    this.minLevel = Infinity;
   }
 
   process(_inputs, outputs) {
@@ -115,6 +135,8 @@ class PlaybackProcessor extends AudioWorkletProcessor {
         this.target = Math.max(MIN_TARGET, this.target - SHRINK_STEP);
       }
     }
+
+    this.report(out.length);
 
     // Mirror to every output channel so stereo destinations play both sides.
     for (let c = 1; c < outputs[0].length; c += 1) outputs[0][c].set(out);
