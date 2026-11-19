@@ -1,6 +1,8 @@
 export { WaCallsClient } from "./client.js";
 export { WaCallsCall } from "./call.js";
 export { WaCallsEvents } from "./events.js";
+export { CallSounds } from "./sounds.js";
+export type { CallSoundsOptions } from "./sounds.js";
 export { WaCallsError } from "./transport.js";
 export { float32ToInt16LE, int16LEToFloat32 } from "./pcm.js";
 export {
@@ -13,6 +15,7 @@ export type {
   AttachAudioOptions,
   CallRecord,
   CallState,
+  CallStats,
   CallStatus,
   RecordingMode,
   ServerEvent,

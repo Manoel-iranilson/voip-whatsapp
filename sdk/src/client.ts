@@ -1,5 +1,6 @@
 import { WaCallsCall } from "./call.js";
 import { WaCallsEvents } from "./events.js";
+import { CallSounds, type CallSoundsOptions } from "./sounds.js";
 import { Transport } from "./transport.js";
 import type {
   AttachAudioOptions,
@@ -16,10 +17,36 @@ type ClaimOptions = AttachAudioOptions & { sessionId: string; callId: string };
 export class WaCallsClient {
   readonly events: WaCallsEvents;
   private readonly transport: Transport;
+  /** Calls this client started, picked up or answered, until they end. */
+  private readonly ownCalls = new Set<string>();
+  private sounds: CallSounds | null = null;
 
   constructor(options: WaCallsClientOptions) {
     this.transport = new Transport(options);
     this.events = new WaCallsEvents(this.transport);
+    this.events.on("call-ended", (e) => {
+      this.ownCalls.delete(e.id);
+    });
+  }
+
+  /**
+   * Plays call progress tones: ringback while this operator's outbound call
+   * rings, a ringtone for incoming calls, and short beeps on answer and hang-up.
+   * Off unless you call this. They follow the event stream, so `events.connect()`
+   * must be running too. Returns a function that turns them off again.
+   *
+   * Call it early — at startup, not inside the dial handler. Browsers only start
+   * audio from a user gesture, and the tones unlock themselves on the clicks
+   * that come after this call.
+   */
+  enableSounds(options: CallSoundsOptions = {}): () => void {
+    this.sounds?.dispose();
+    const sounds = new CallSounds(this.events, this.clientId, (id) => this.ownCalls.has(id), options);
+    this.sounds = sounds;
+    return () => {
+      sounds.dispose();
+      if (this.sounds === sounds) this.sounds = null;
+    };
   }
 
   /** The identity the server ties call ownership to. */
@@ -88,6 +115,7 @@ export class WaCallsClient {
         operator: opts.operator ?? "",
       },
     );
+    this.ownCalls.add(call.callId);
     return new WaCallsCall(this.transport, opts.sessionId, call.callId);
   }
 
@@ -104,6 +132,7 @@ export class WaCallsClient {
    * trying the same call gets a 409.
    */
   async pickUp(opts: ClaimOptions): Promise<WaCallsCall> {
+    this.ownCalls.add(opts.callId);
     const call = new WaCallsCall(this.transport, opts.sessionId, opts.callId);
     await call.attachAudio(opts);
     return call;
@@ -115,6 +144,7 @@ export class WaCallsClient {
       `/api/sessions/${opts.sessionId}/calls/${opts.callId}/accept`,
       {},
     );
+    this.ownCalls.add(opts.callId);
     const call = new WaCallsCall(this.transport, opts.sessionId, opts.callId);
     await call.attachAudio(opts);
     return call;

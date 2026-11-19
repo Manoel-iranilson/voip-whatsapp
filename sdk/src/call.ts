@@ -9,12 +9,47 @@ import {
 } from "./constants.js";
 import { float32ToInt16LE, int16LEToFloat32 } from "./pcm.js";
 import { Transport, WaCallsError } from "./transport.js";
-import type { AttachAudioOptions, CallState } from "./types.js";
+import type { AttachAudioOptions, CallState, CallStats } from "./types.js";
 import { loadWorklets } from "./worklets.js";
 
 type CallEventMap = {
   state: CallState;
   error: Error;
+  /** Once a second while audio flows: where the peer's audio is getting cut. */
+  stats: CallStats;
+};
+
+/**
+ * What the panel asks for. The browser usually enables these by default, but
+ * not everywhere, and an echo on a speakerphone call is the first complaint.
+ */
+const DEFAULT_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: 1,
+};
+
+/**
+ * Opens the microphone. A remembered deviceId can stop matching anything —
+ * Safari rotates them between sessions — so that falls back to the default mic
+ * instead of failing the call.
+ */
+const openMic = async (
+  deviceId: string | null | undefined,
+  extra: MediaTrackConstraints | undefined,
+): Promise<MediaStream> => {
+  const base: MediaTrackConstraints = { ...DEFAULT_AUDIO_CONSTRAINTS, ...(extra ?? {}) };
+  if (!deviceId) return navigator.mediaDevices.getUserMedia({ audio: base });
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: { ...base, deviceId: { exact: deviceId } },
+    });
+  } catch (e) {
+    const name = (e as DOMException).name;
+    if (name !== "OverconstrainedError" && name !== "NotFoundError") throw e;
+    return navigator.mediaDevices.getUserMedia({ audio: base });
+  }
 };
 
 type Listener<K extends keyof CallEventMap> = (payload: CallEventMap[K]) => void;
@@ -41,6 +76,7 @@ export class WaCallsCall {
   private playbackNode: AudioWorkletNode | null = null;
   private streamDest: MediaStreamAudioDestinationNode | null = null;
   private pageHideHandler: (() => void) | null = null;
+  private audioConstraints: MediaTrackConstraints | undefined;
 
   private _state: CallState = "idle";
   private _muted = false;
@@ -56,7 +92,10 @@ export class WaCallsCall {
     return this._state;
   }
 
-  /** Feed this to an `<audio>` element's `srcObject`. Available once attached. */
+  /**
+   * Feed this to an `<audio>` element's `srcObject`. Available once attached,
+   * and `null` with `output: "speakers"`, where the SDK plays the audio itself.
+   */
   get remoteStream(): MediaStream | null {
     return this.streamDest?.stream ?? null;
   }
@@ -130,11 +169,8 @@ export class WaCallsCall {
   }
 
   private async negotiate(opts: AttachAudioOptions): Promise<void> {
-    const audio: MediaTrackConstraints = { ...(opts.audioConstraints ?? {}) };
-    if (opts.micDeviceId) audio.deviceId = { exact: opts.micDeviceId };
-    this.micStream = await navigator.mediaDevices.getUserMedia({
-      audio: Object.keys(audio).length > 0 ? audio : true,
-    });
+    this.audioConstraints = opts.audioConstraints;
+    this.micStream = await openMic(opts.micDeviceId, opts.audioConstraints);
 
     const pc = new RTCPeerConnection({ iceServers: [] });
     this.pc = pc;
@@ -143,24 +179,17 @@ export class WaCallsCall {
     dc.binaryType = "arraybuffer";
     this.dc = dc;
 
-    // Everything rests on this: the browser resamples the 48 kHz microphone to
-    // 16 kHz on the way into the graph, and there is no resampler anywhere else
-    // in the stack. A browser that ignores the hint would send audio at three
-    // times the rate the server expects, which sounds like chipmunks rather
-    // than like a bug.
-    const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    // The context runs at the device's native rate and the worklets resample
+    // to and from 16 kHz. Forcing a 16 kHz context is what Safari cannot do: the
+    // microphone comes out silent or distorted.
+    const ctx = new AudioContext({ latencyHint: "interactive" });
     this.ctx = ctx;
-    if (Math.round(ctx.sampleRate) !== SAMPLE_RATE) {
-      throw new Error(
-        `this browser gave a ${ctx.sampleRate} Hz AudioContext; WaCalls needs ${SAMPLE_RATE} Hz`,
-      );
-    }
 
     await loadWorklets(ctx);
     await ctx.resume();
 
     this.buildCaptureGraph(ctx, dc);
-    this.buildPlaybackGraph(ctx, dc, opts.maxLatencyMs ?? DEFAULT_MAX_LATENCY_MS);
+    this.buildPlaybackGraph(ctx, dc, opts.maxLatencyMs ?? DEFAULT_MAX_LATENCY_MS, opts.output ?? "element");
     this.watchConnection(pc, dc);
 
     const offer = await pc.createOffer();
@@ -178,7 +207,9 @@ export class WaCallsCall {
 
   private buildCaptureGraph(ctx: AudioContext, dc: RTCDataChannel): void {
     const captureNode = new AudioWorkletNode(ctx, CAPTURE_PROCESSOR_NAME, {
-      processorOptions: { frameSize: CAPTURE_FRAME_SIZE },
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { frameSize: CAPTURE_FRAME_SIZE, targetRate: SAMPLE_RATE },
     });
     captureNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
       if (dc.readyState === "open") dc.send(float32ToInt16LE(e.data));
@@ -192,32 +223,78 @@ export class WaCallsCall {
     this.micSource.connect(captureNode);
   }
 
-  private buildPlaybackGraph(ctx: AudioContext, dc: RTCDataChannel, maxLatencyMs: number): void {
+  private buildPlaybackGraph(
+    ctx: AudioContext,
+    dc: RTCDataChannel,
+    maxLatencyMs: number,
+    output: "element" | "speakers",
+  ): void {
     const capacitySamples = Math.max(
       CAPTURE_FRAME_SIZE,
       Math.round((maxLatencyMs * SAMPLE_RATE) / 1000),
     );
     const playbackNode = new AudioWorkletNode(ctx, PLAYBACK_PROCESSOR_NAME, {
-      processorOptions: { capacitySamples },
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { capacitySamples, sourceRate: SAMPLE_RATE },
     });
 
-    const streamDest = ctx.createMediaStreamDestination();
-    // The processor writes one channel. Left at the default of two, the right
-    // channel stays silent and some output paths play the call in one ear.
-    try {
-      streamDest.channelCount = 1;
-      streamDest.channelCountMode = "explicit";
-    } catch {
-      // Not fatal — a browser that refuses this still plays, just in stereo.
+    if (output === "speakers") {
+      // Straight to the context's output. Routing through a
+      // MediaStreamDestination into an <audio> element is silent on iOS Safari.
+      playbackNode.connect(ctx.destination);
+    } else {
+      const streamDest = ctx.createMediaStreamDestination();
+      // The processor writes one channel. Left at the default of two, the right
+      // channel stays silent and some output paths play the call in one ear.
+      try {
+        streamDest.channelCount = 1;
+        streamDest.channelCountMode = "explicit";
+      } catch {
+        // Not fatal — a browser that refuses this still plays, just in stereo.
+      }
+      playbackNode.connect(streamDest);
+      this.streamDest = streamDest;
     }
-    playbackNode.connect(streamDest);
 
+    // Arrival bookkeeping for the `stats` event: frames that reach the browser
+    // late are a network/server problem; underruns with no late frames are the
+    // browser's audio output.
+    let frames = 0;
+    let receivedSamples = 0;
+    let maxGap = 0;
+    let lastArrival = 0;
     dc.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-      playbackNode.port.postMessage(int16LEToFloat32(e.data));
+      const now = performance.now();
+      if (lastArrival) maxGap = Math.max(maxGap, now - lastArrival);
+      lastArrival = now;
+      frames += 1;
+      const pcm = int16LEToFloat32(e.data);
+      receivedSamples += pcm.length;
+      // Transfer instead of copy: less work on the main thread per frame.
+      playbackNode.port.postMessage(pcm, [pcm.buffer]);
+    };
+
+    type WorkletStats = Pick<CallStats, "underruns" | "bufferMs" | "minBufferMs" | "targetMs">;
+    playbackNode.port.onmessage = (e: MessageEvent<WorkletStats>) => {
+      // A gap still open counts too, or a total stall would read as zero.
+      const openGap = lastArrival ? performance.now() - lastArrival : 0;
+      const stats: CallStats = {
+        ...e.data,
+        frames,
+        receivedMs: Math.round(receivedSamples / (SAMPLE_RATE / 1000)),
+        maxGapMs: Math.round(Math.max(maxGap, openGap)),
+        sampleRate: ctx.sampleRate,
+        outputLatencyMs: Math.round(((ctx.outputLatency || 0) + (ctx.baseLatency || 0)) * 1000),
+      };
+      frames = 0;
+      receivedSamples = 0;
+      maxGap = 0;
+      this.emit("stats", stats);
     };
 
     this.playbackNode = playbackNode;
-    this.streamDest = streamDest;
   }
 
   /**
@@ -274,9 +351,7 @@ export class WaCallsCall {
   async setMicDevice(deviceId: string | null): Promise<void> {
     if (!this.ctx || !this.captureNode) throw new Error("setMicDevice: audio is not attached");
 
-    const fresh = await navigator.mediaDevices.getUserMedia({
-      audio: deviceId ? { deviceId: { exact: deviceId } } : true,
-    });
+    const fresh = await openMic(deviceId, this.audioConstraints);
 
     this.micSource?.disconnect();
     this.micStream?.getTracks().forEach((t) => t.stop());
@@ -312,6 +387,16 @@ export class WaCallsCall {
       this.pageHideHandler = null;
     }
     if (this.captureNode) this.captureNode.port.onmessage = null;
+    if (this.playbackNode) this.playbackNode.port.onmessage = null;
+    // Lets the processors return false and be collected instead of running on
+    // in a graph nobody pulls.
+    for (const node of [this.captureNode, this.playbackNode]) {
+      try {
+        node?.port.postMessage("close");
+      } catch {
+        // Port already closed.
+      }
+    }
     if (this.dc) this.dc.onmessage = null;
     if (this.pc) this.pc.onconnectionstatechange = null;
 
@@ -330,11 +415,12 @@ export class WaCallsCall {
     } catch {
       // Already stopped.
     }
-    try {
-      void this.ctx?.close();
-    } catch {
-      // Already closed.
-    }
+    // close() returns a promise, so a try/catch never saw its rejection: a
+    // second close() threw "Cannot close a closed AudioContext" as an uncaught
+    // promise. Clearing the field makes a repeat close() a no-op.
+    const ctx = this.ctx;
+    this.ctx = null;
+    if (ctx && ctx.state !== "closed") void ctx.close().catch(() => {});
     try {
       this.pc?.close();
     } catch {

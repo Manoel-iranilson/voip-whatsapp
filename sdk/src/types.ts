@@ -33,6 +33,32 @@ export type SessionInfo = {
   paired: boolean;
 };
 
+/**
+ * Emitted once a second by `call.on("stats")`: where the peer's audio is
+ * getting cut. If `maxGapMs` is high, frames reach the browser late (network,
+ * server or data channel). If gaps are low but `underruns` still climbs, the
+ * browser's audio output is the problem.
+ */
+export type CallStats = {
+  /** Frames received in the last second (50 expected for 20 ms frames). */
+  frames: number;
+  /** Audio received in the last second, in ms (about 1000 expected). */
+  receivedMs: number;
+  /** Longest wait between two frames in the last second. */
+  maxGapMs: number;
+  /** Times playback ran dry in the last second. */
+  underruns: number;
+  /** Audio waiting to be played right now. */
+  bufferMs: number;
+  /** Lowest the buffer got in the last second. */
+  minBufferMs: number;
+  /** What the jitter buffer is currently aiming to hold. */
+  targetMs: number;
+  /** The context's real rate and output latency, which differ per device. */
+  sampleRate: number;
+  outputLatencyMs: number;
+};
+
 /** Local state of the browser's audio leg. Not the same as the call's status. */
 export type CallState = "idle" | "connecting" | "connected" | "ended" | "failed";
 
@@ -71,6 +97,14 @@ export type AttachAudioOptions = {
    * default.
    */
   audioConstraints?: MediaTrackConstraints;
+  /**
+   * Where the caller's voice is played.
+   * - `"element"` (default): through `call.remoteStream`, which you put in an
+   *   `<audio>` element (`useRemoteAudio` in React). Silent on iOS Safari.
+   * - `"speakers"`: the SDK plays it itself, which also works on iPhone. Do not
+   *   also attach `remoteStream` to an `<audio>`: it is `null` in this mode.
+   */
+  output?: "element" | "speakers";
 };
 
 export type StartCallOptions = {

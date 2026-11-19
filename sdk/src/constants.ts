@@ -37,9 +37,9 @@ export const PLAYBACK_PROCESSOR_NAME = "wacalls-playback";
 export const ICE_GATHERING_TIMEOUT_MS = 2_000;
 
 /**
- * Playback buffer ceiling, in milliseconds. Matches the panel's 2 s ring so
- * behaviour is identical out of the box; 300–500 ms is the better setting for a
- * live conversation, because the buffer only ever drains on underrun and any
- * latency it accumulates is permanent until then.
+ * Hard ceiling of the playback buffer, in milliseconds; past it the oldest
+ * audio is dropped. Below it an adaptive jitter buffer holds 60–300 ms and
+ * drains excess by playing ~2% faster. Matches the panel's 2 s ring; 300–500 ms
+ * is the better setting for a live conversation.
  */
 export const DEFAULT_MAX_LATENCY_MS = 2_000;

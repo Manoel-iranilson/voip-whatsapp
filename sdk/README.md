@@ -85,6 +85,23 @@ wacalls.events.on("incoming", async ({ sessionId, id, peer }) => {
 });
 ```
 
+### Sons de chamada
+
+O SDK não toca nada por padrão. Para ter o "tuuu… tuuu…" enquanto chama (padrão brasileiro,
+425 Hz), o toque de chamada recebida e os bipes de atendeu/desligou, ligue uma vez, **na
+inicialização** — não dentro do clique de discar:
+
+```ts
+wacalls.events.connect();           // obrigatório: os sons seguem o stream de eventos
+const desligarSons = wacalls.enableSounds();
+// opções: { ringback, incoming, answered, ended, volume }  — todas ligadas, volume 0.15
+```
+
+O navegador só libera áudio a partir de um gesto do usuário. O SDK se destrava sozinho nos
+cliques que vierem depois de `enableSounds()`, então o clique de "Ligar" já basta.
+
+No React: `useWaCallsClient(options, { sounds: true })`.
+
 ### Sessões e QR code
 
 O QR nunca volta na resposta HTTP: ele chega pelo stream de eventos. Conecte `events` antes.
@@ -166,8 +183,19 @@ Duas restrições que vêm junto:
 | Opção | Padrão | Descrição |
 |---|---|---|
 | `micDeviceId` | microfone padrão | `deviceId` de `enumerateDevices()` |
-| `maxLatencyMs` | `2000` | teto do buffer de reprodução. **300–500 é melhor para conversa** — o padrão existe só para igualar o comportamento do painel |
-| `audioConstraints` | — | mesclado no `getUserMedia`; use para desligar `echoCancellation` ou `noiseSuppression` |
+| `maxLatencyMs` | `2000` | teto rígido do buffer de reprodução. Abaixo dele, um jitter buffer adaptativo segura 60–300 ms e se ajusta sozinho. **300–500 é melhor para conversa** |
+| `audioConstraints` | eco, ruído e ganho ligados, mono | mesclado no `getUserMedia`; use para desligar `echoCancellation` ou `noiseSuppression` |
+| `output` | `"element"` | `"element"`: toque `call.remoteStream` num `<audio>` (`useRemoteAudio`). `"speakers"`: o SDK toca sozinho — **use no iPhone**, onde o `<audio>` fica mudo |
+
+### Diagnóstico de cortes
+
+```ts
+call.on("stats", (s) => console.log(s)); // uma vez por segundo
+```
+
+`maxGapMs` alto: os pacotes chegam atrasados (rede, servidor). `maxGapMs` baixo mas `underruns`
+subindo: o problema é a saída de áudio do navegador. Também traz `frames` (50 esperados),
+`receivedMs` (~1000), `bufferMs`, `minBufferMs`, `targetMs`, `sampleRate` e `outputLatencyMs`.
 
 ---
 
@@ -189,9 +217,9 @@ silêncio ou voz acelerada, sem erro em lugar nenhum.
 - ICE: vanilla, sem trickle. Espere o gathering terminar antes de postar. Não há STUN nem TURN
   dos dois lados: o único caminho é o navegador alcançar o IP público do servidor na faixa UDP
   publicada.
-- Reamostragem: não existe resampler no código. Tudo depende de
-  `new AudioContext({ sampleRate: 16000 })`, que faz o navegador converter o microfone de
-  48 kHz na entrada do grafo.
+- Reamostragem: o `AudioContext` roda na taxa nativa do aparelho (44,1/48 kHz) e os worklets
+  convertem para 16 kHz e de volta — captura com filtro anti-aliasing, reprodução com
+  interpolação. Forçar `sampleRate: 16000` deixa o microfone mudo ou distorcido no Safari.
 
 ---
 
@@ -209,8 +237,7 @@ do servidor, e delega o fim da chamada ao stream de eventos.
 | `close()` só acontece via SSE `call-ended`; sem stream, **o microfone fica aberto** | ciclo de vida próprio, funciona com ou sem SSE |
 | Fechar a aba encerra a chamada só pelo timeout de ICE, segundos depois | `pagehide` → `DELETE` com `keepalive` |
 | Destino de áudio estéreo com o processor escrevendo um canal | `channelCount: 1` |
-| `sampleRate: 16000` assumido sem verificação | valida e falha com mensagem clara |
-| Buffer de 2 s que acumula latência | `maxLatencyMs` configurável |
+| Buffer de 2 s que acumula latência | `maxLatencyMs` configurável, com o mesmo jitter buffer adaptativo do painel |
 | Sem mute, sem troca de microfone | `mute()`, `setMicDevice()`, `getStats()` |
 
 ---
