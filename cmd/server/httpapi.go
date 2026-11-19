@@ -48,10 +48,26 @@ func (s *server) routes() http.Handler {
 
 	if s.staticDir != "" {
 		if _, err := os.Stat(s.staticDir); err == nil {
-			root.Handle("/", http.FileServer(http.Dir(s.staticDir)))
+			root.Handle("/", withStaticCache(http.FileServer(http.Dir(s.staticDir))))
 		}
 	}
 	return root
+}
+
+// withStaticCache keeps a deploy from being hidden behind the browser cache.
+// Vite fingerprints everything under /assets/, so those never change and can be
+// cached for good. Everything else — index.html above all, which names the
+// current bundle — must be revalidated, or the browser keeps running the old
+// client after the server is updated.
+func withStaticCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
