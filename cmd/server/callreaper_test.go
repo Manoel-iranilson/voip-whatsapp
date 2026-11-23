@@ -26,6 +26,7 @@ func TestJudgeCall(t *testing.T) {
 		{"ended entry removed", call.CallSnapshot{State: core.CallStateEnded, CreatedAt: ago(time.Second)}, true, registeredCall{}, true, true},
 		{"ringing within timeout", call.CallSnapshot{State: core.CallStateRinging, CreatedAt: ago(30 * time.Second)}, true, registeredCall{}, false, false},
 		{"ringing too long", call.CallSnapshot{State: core.CallStateRinging, CreatedAt: ago(2 * time.Minute)}, true, registeredCall{}, true, false},
+		{"ringing but peer audio flowing kept", call.CallSnapshot{State: core.CallStateRinging, CreatedAt: ago(5 * time.Minute)}, true, registeredCall{lastPeerAudio: ago(2 * time.Second)}, false, false},
 		{"incoming ringing too long", call.CallSnapshot{State: core.CallStateIncomingRinging, CreatedAt: ago(2 * time.Minute)}, true, registeredCall{}, true, false},
 		{"connecting with no audio", call.CallSnapshot{State: core.CallStateConnecting, CreatedAt: ago(3 * time.Minute), AcceptedAt: at(2 * time.Minute)}, true, registeredCall{}, true, false},
 		// The "stuck on calling" bug: state never reaches active, yet audio flows.

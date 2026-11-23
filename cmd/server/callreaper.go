@@ -52,7 +52,10 @@ func judgeCall(snap call.CallSnapshot, hasCall bool, rc registeredCall, now time
 	case core.CallStateEnded:
 		return staleVerdict{stale: true, ended: true, reason: core.EndCallReasonUnknown, why: "ended but still registered"}
 	case core.CallStateInitiating, core.CallStateRinging, core.CallStateIncomingRinging:
-		if now.Sub(snap.CreatedAt) > ringTimeout {
+		// Peer audio counts as life here too. A call whose accept was never
+		// applied stays "ringing" while two people are talking on it, and
+		// ending it on the ring timeout would hang up a live conversation.
+		if now.Sub(lastSign(snap, rc)) > ringTimeout {
 			return staleVerdict{stale: true, reason: core.EndCallReasonTimeout, why: "rang too long without an answer"}
 		}
 	case core.CallStateConnecting:
