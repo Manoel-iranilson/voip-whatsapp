@@ -35,7 +35,7 @@ const (
 	// accept nor the terminate — so the peer hanging up is only visible as
 	// their audio stopping. Silence alone does not trigger it: a silent peer
 	// still sends packets, only less often.
-	peerGoneTimeout = 10 * time.Second
+	peerGoneTimeout = 5 * time.Second
 )
 
 // staleVerdict says what the reaper should do with one registered call.

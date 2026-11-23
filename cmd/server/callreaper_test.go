@@ -33,8 +33,8 @@ func TestJudgeCall(t *testing.T) {
 		// Such a call is live and must not be cut.
 		{"connecting with live audio kept", call.CallSnapshot{State: core.CallStateConnecting, CreatedAt: ago(10 * time.Minute), AcceptedAt: at(9 * time.Minute)}, true, registeredCall{lastPeerAudio: ago(time.Second)}, false, false},
 		{"active long call with audio kept", call.CallSnapshot{State: core.CallStateActive, CreatedAt: ago(time.Hour), AcceptedAt: at(time.Hour)}, true, registeredCall{lastPeerAudio: ago(2 * time.Second)}, false, false},
-		{"active with a short audio gap kept", call.CallSnapshot{State: core.CallStateActive, CreatedAt: ago(time.Minute), AcceptedAt: at(time.Minute)}, true, registeredCall{lastPeerAudio: ago(5 * time.Second)}, false, false},
-		{"active after peer hung up", call.CallSnapshot{State: core.CallStateActive, CreatedAt: ago(time.Minute), AcceptedAt: at(time.Minute)}, true, registeredCall{lastPeerAudio: ago(15 * time.Second)}, true, false},
+		{"active with a short audio gap kept", call.CallSnapshot{State: core.CallStateActive, CreatedAt: ago(time.Minute), AcceptedAt: at(time.Minute)}, true, registeredCall{lastPeerAudio: ago(3 * time.Second)}, false, false},
+		{"active after peer hung up", call.CallSnapshot{State: core.CallStateActive, CreatedAt: ago(time.Minute), AcceptedAt: at(time.Minute)}, true, registeredCall{lastPeerAudio: ago(7 * time.Second)}, true, false},
 		{"active with no audio yet kept", call.CallSnapshot{State: core.CallStateActive, CreatedAt: ago(30 * time.Second), AcceptedAt: at(30 * time.Second)}, true, registeredCall{}, false, false},
 		{"active with audio gone", call.CallSnapshot{State: core.CallStateActive, CreatedAt: ago(time.Hour), AcceptedAt: at(time.Hour)}, true, registeredCall{lastPeerAudio: ago(5 * time.Minute)}, true, false},
 	}
