@@ -222,7 +222,7 @@ func (s *Session) handleEvent(rawEvt any) {
 		// A call stanza whatsmeow does not map to an event. If WhatsApp moves the
 		// accept to a new tag, this is the only place it shows up.
 		if evt.Node != nil {
-			s.log.Info("unknown call event", "node", evt.Node.XMLString())
+			s.log.Info("unknown call event", "node", evt.Node.String())
 		}
 	case *events.CallTransport:
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
