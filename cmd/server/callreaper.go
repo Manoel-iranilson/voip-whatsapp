@@ -13,7 +13,9 @@ import (
 // forever, so stale entries piled up until every new call got "max concurrent
 // calls". The reaper ends anything that has clearly stopped being a live call.
 const (
-	reapInterval = 15 * time.Second
+	// reapInterval is short because the reaper also stands in for the peer's
+	// hang-up (see peerGoneTimeout), and that has to show up on screen quickly.
+	reapInterval = 2 * time.Second
 	// orphanTimeout covers an entry whose manager never got a call, such as an
 	// offer that could not be parsed.
 	orphanTimeout = 30 * time.Second
@@ -27,6 +29,13 @@ const (
 	// packet at all for this long. Peers send packets during silence too, so a
 	// call this quiet has lost its media path or missed its terminate.
 	mediaIdleTimeout = 3 * time.Minute
+	// peerGoneTimeout ends an established call once the peer, after having
+	// sent audio, sends nothing at all for this long. Since mid-November 2026
+	// no call stanza from the peer reaches us on outbound calls — neither the
+	// accept nor the terminate — so the peer hanging up is only visible as
+	// their audio stopping. Silence alone does not trigger it: a silent peer
+	// still sends packets, only less often.
+	peerGoneTimeout = 10 * time.Second
 )
 
 // staleVerdict says what the reaper should do with one registered call.
@@ -63,6 +72,9 @@ func judgeCall(snap call.CallSnapshot, hasCall bool, rc registeredCall, now time
 			return staleVerdict{stale: true, reason: core.EndCallReasonFailed, why: "accepted but media never flowed"}
 		}
 	default: // active, on hold
+		if !rc.lastPeerAudio.IsZero() && now.Sub(rc.lastPeerAudio) > peerGoneTimeout {
+			return staleVerdict{stale: true, reason: core.EndCallReasonUserEnded, why: "peer audio stopped; assuming they hung up"}
+		}
 		if now.Sub(lastSign(snap, rc)) > mediaIdleTimeout {
 			return staleVerdict{stale: true, reason: core.EndCallReasonFailed, why: "no peer audio for too long"}
 		}
