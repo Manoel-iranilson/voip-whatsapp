@@ -315,6 +315,7 @@ func (s *server) doStartCall(sess *Session, w http.ResponseWriter, r *http.Reque
 	}
 
 	if max := s.sessions.maxCalls; max > 0 && sess.reg.count() >= max {
+		sess.logCallsAtCapacity()
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "max concurrent calls"})
 		return
 	}

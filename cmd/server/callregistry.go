@@ -16,6 +16,18 @@ type activeCall struct {
 	// cap ends the call when duration_ms was given. It has to be stopped when the
 	// call ends on its own, or it fires against a call id that is gone.
 	cap *time.Timer
+	// addedAt and lastPeerAudio let the reaper find calls whose end was never
+	// signalled. lastPeerAudio is guarded by the registry lock.
+	addedAt       time.Time
+	lastPeerAudio time.Time
+}
+
+// registeredCall pairs a call id with its entry, for scans over the registry.
+type registeredCall struct {
+	id            string
+	ac            *activeCall
+	addedAt       time.Time
+	lastPeerAudio time.Time
 }
 
 type callRegistry struct {
@@ -30,7 +42,31 @@ func newCallRegistry() *callRegistry {
 func (r *callRegistry) add(callID string, ac *activeCall) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if ac.addedAt.IsZero() {
+		ac.addedAt = time.Now()
+	}
 	r.calls[callID] = ac
+}
+
+// touchPeerAudio records that audio from the peer just arrived on callID.
+func (r *callRegistry) touchPeerAudio(callID string, at time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if ac, ok := r.calls[callID]; ok {
+		ac.lastPeerAudio = at
+	}
+}
+
+// list returns every registered call. The entries are copies of the timing
+// fields, so the caller can inspect them without holding the lock.
+func (r *callRegistry) list() []registeredCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]registeredCall, 0, len(r.calls))
+	for id, ac := range r.calls {
+		out = append(out, registeredCall{id: id, ac: ac, addedAt: ac.addedAt, lastPeerAudio: ac.lastPeerAudio})
+	}
+	return out
 }
 
 func (r *callRegistry) get(callID string) (*activeCall, bool) {

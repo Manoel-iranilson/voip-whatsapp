@@ -31,6 +31,9 @@ type Session struct {
 
 	mu   sync.Mutex
 	auth AuthSnapshot
+
+	stopReaper     chan struct{}
+	stopReaperOnce sync.Once
 }
 
 func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) *Session {
@@ -42,8 +45,11 @@ func newSession(mgr *SessionManager, id, name string, client *whatsmeow.Client) 
 		client: client,
 		auth:   AuthSnapshot{State: "connecting"},
 		reg:    newCallRegistry(),
+
+		stopReaper: make(chan struct{}),
 	}
 	client.AddEventHandler(s.handleEvent)
+	go s.runReaper(s.stopReaper)
 	return s
 }
 
@@ -130,6 +136,7 @@ func (s *Session) wireCall(cm *call.CallManager, callID string) {
 		if !ok {
 			return
 		}
+		s.reg.touchPeerAudio(callID, time.Now())
 		// Record first: the recording must not depend on a browser being attached.
 		ac.rec.WritePeer(pcm16)
 		if ac.bridge != nil {
@@ -356,6 +363,9 @@ func (s *Session) replaceClient(client *whatsmeow.Client) {
 }
 
 func (s *Session) shutdown() {
+	if s.stopReaper != nil {
+		s.stopReaperOnce.Do(func() { close(s.stopReaper) })
+	}
 	s.teardownAllCalls()
 	s.client.Disconnect()
 }

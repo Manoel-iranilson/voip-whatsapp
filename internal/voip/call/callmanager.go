@@ -71,6 +71,32 @@ func (m *CallManager) CurrentCall() *CallInfo {
 	return m.currentCall
 }
 
+// CallSnapshot is a copy of the parts of a call's state that code outside the
+// manager needs, taken under the lock so it does not race the signaling paths.
+type CallSnapshot struct {
+	CallID     string
+	State      core.CallState
+	CreatedAt  time.Time
+	AcceptedAt *time.Time
+}
+
+// Snapshot reports the current call's state. ok is false when the manager has
+// no call yet, such as an offer that was never parsed.
+func (m *CallManager) Snapshot() (snap CallSnapshot, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c := m.currentCall
+	if c == nil {
+		return CallSnapshot{}, false
+	}
+	snap = CallSnapshot{CallID: c.CallID, State: c.StateData.State, CreatedAt: c.CreatedAt}
+	if c.StateData.AcceptedAt != nil {
+		t := *c.StateData.AcceptedAt
+		snap.AcceptedAt = &t
+	}
+	return snap, true
+}
+
 func (m *CallManager) emitState() {
 	if m.OnStateChange != nil && m.currentCall != nil {
 		m.OnStateChange(m.currentCall)
