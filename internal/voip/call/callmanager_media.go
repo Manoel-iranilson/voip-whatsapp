@@ -1,6 +1,7 @@
 package call
 
 import (
+	"math"
 	"time"
 	"wacalls/internal/voip/core"
 	"wacalls/internal/voip/media"
@@ -106,6 +107,63 @@ func (m *CallManager) startSilenceKeepaliveLocked() {
 	}()
 }
 
+const (
+	// peerVoiceRMS is the level a decoded frame must reach to count as speech
+	// or room noise from an open microphone (about -50 dBFS). A ringing phone
+	// sends nothing, or digital silence, which stays far below it.
+	peerVoiceRMS = 0.003
+	// peerVoiceFrames is how many such frames prove the peer has answered.
+	peerVoiceFrames = 5
+)
+
+// promoteOnPeerVoice marks an outgoing call answered when the peer is audibly
+// talking but the accept stanza never arrived or never applied. The audio and
+// the status travel separate paths, and since mid-November 2026 calls were
+// reaching a live conversation while the status stayed "ringing" forever.
+// Voice from the peer is proof they picked up, so it is taken as the accept.
+func (m *CallManager) promoteOnPeerVoice(pcm []float32) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	call := m.currentCall
+	if call == nil || !call.IsInitiator() {
+		return
+	}
+	state := call.StateData.State
+	if state != core.CallStateInitiating && state != core.CallStateRinging && state != core.CallStateConnecting {
+		return
+	}
+	if frameRMS(pcm) < peerVoiceRMS {
+		return
+	}
+	m.voicedPeerFrames++
+	if m.voicedPeerFrames < peerVoiceFrames {
+		return
+	}
+	if state != core.CallStateConnecting {
+		if err := call.ApplyTransition(Transition{Type: TransitionRemoteAccepted}); err != nil {
+			return
+		}
+	}
+	if err := call.ApplyTransition(Transition{Type: TransitionMediaConnected}); err != nil {
+		return
+	}
+	m.log.Warn("peer is talking but no accept was applied; marking call active from audio",
+		"call_id", call.CallID, "was", string(state))
+	m.emitState()
+	m.startSilenceKeepaliveLocked()
+}
+
+func frameRMS(pcm []float32) float64 {
+	if len(pcm) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, v := range pcm {
+		sum += float64(v) * float64(v)
+	}
+	return math.Sqrt(sum / float64(len(pcm)))
+}
+
 func (m *CallManager) onRelayData(data []byte) {
 	if transport.IsStunPacket(data) {
 		return
@@ -156,6 +214,7 @@ func (m *CallManager) onRelayData(data []byte) {
 		return
 	}
 	pcm = media.NormalizeFrame(pcm, codec.FrameSize())
+	m.promoteOnPeerVoice(pcm)
 	if m.OnPeerAudio != nil {
 		m.OnPeerAudio(pcm)
 	}

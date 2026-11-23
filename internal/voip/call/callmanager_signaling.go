@@ -117,7 +117,9 @@ func (m *CallManager) HandleCallAccept(ctx context.Context, node *waBinary.Node,
 	}
 
 	m.mu.Lock()
-	_ = call.ApplyTransition(Transition{Type: TransitionRemoteAccepted})
+	if err := call.ApplyTransition(Transition{Type: TransitionRemoteAccepted}); err != nil {
+		m.log.Warn("accept did not apply", "call_id", call.CallID, "err", err)
+	}
 	m.emitState()
 	m.acceptedByJid = peerJid.String()
 	if m.peerSsrcs == nil || !m.actualPeerSet {

@@ -43,6 +43,10 @@ type CallManager struct {
 	lastCaptureAt time.Time
 	keepaliveStop chan struct{}
 
+	// voicedPeerFrames counts decoded peer frames loud enough to be speech
+	// while an outgoing call still waits for its accept. See promoteOnPeerVoice.
+	voicedPeerFrames int
+
 	OnStateChange func(*CallInfo)
 	OnIncoming    func(*CallInfo)
 	OnEnded       func(*CallInfo)
@@ -126,6 +130,7 @@ func (m *CallManager) StartCall(ctx context.Context, callID string, peerJid type
 	m.currentCall = call
 	m.initialTransportSent = false
 	m.outgoingPreacceptSent = false
+	m.voicedPeerFrames = 0
 
 	selfJid := creator.String()
 	m.selfSsrc = media.GenerateSecureSsrc(callID, selfJid, 0)

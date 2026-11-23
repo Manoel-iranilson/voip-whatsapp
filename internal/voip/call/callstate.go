@@ -134,7 +134,11 @@ func (c *CallInfo) ApplyTransition(t Transition) error {
 		s.Silenced = t.Silenced
 
 	case TransitionRemoteAccepted:
-		if s.State != core.CallStateRinging {
+		// Initiating is allowed because the peer's accept can arrive before the
+		// offer ack does: StartCall only moves to ringing once the ack query
+		// returns, and an accept dropped here would leave the call unanswered
+		// in every status the API reports.
+		if s.State != core.CallStateRinging && s.State != core.CallStateInitiating {
 			return &InvalidTransition{string(s.State), t.Type}
 		}
 		s.State = core.CallStateConnecting

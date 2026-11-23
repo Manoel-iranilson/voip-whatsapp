@@ -209,8 +209,20 @@ func (s *Session) handleEvent(rawEvt any) {
 	case *events.CallOffer:
 		s.onIncomingOffer(ctx, evt)
 	case *events.CallAccept:
-		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
+		ac, ok := s.callForEvent(evt.From, evt.Data)
+		s.log.Info("call accept event", "from", evt.From.String(), "call_id", callIDFromNode(wrapCall(evt.From, evt.Data)), "known_call", ok)
+		if ok {
 			ac.cm.HandleCallAccept(ctx, wrapCall(evt.From, evt.Data), evt.From)
+		}
+	case *events.CallPreAccept:
+		s.log.Info("call preaccept event", "from", evt.From.String(), "call_id", callIDFromNode(wrapCall(evt.From, evt.Data)))
+	case *events.CallRelayLatency:
+		s.log.Debug("call relaylatency event", "from", evt.From.String())
+	case *events.UnknownCallEvent:
+		// A call stanza whatsmeow does not map to an event. If WhatsApp moves the
+		// accept to a new tag, this is the only place it shows up.
+		if evt.Node != nil {
+			s.log.Info("unknown call event", "node", evt.Node.XMLString())
 		}
 	case *events.CallTransport:
 		if ac, ok := s.callForEvent(evt.From, evt.Data); ok {
